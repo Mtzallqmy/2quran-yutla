@@ -22,6 +22,21 @@ export type R2MediaAsset = {
   downloadUrl?: string | null;
 };
 
+export type R2ContentSource = {
+  id: string;
+  name: string;
+  officialUrl: string;
+  termsUrl: string;
+  licenseLabel: string;
+  rightsStatus: "r2_redistribution_allowed" | "stream_link_only" | "attribution_required" | "permission_required" | "review_required" | "prohibited";
+  streamingAllowed: number | boolean;
+  downloadAllowed: number | boolean;
+  r2RedistributionAllowed: number | boolean;
+  attributionRequired: number | boolean;
+  attributionText?: string | null;
+  reviewedAt?: string | null;
+};
+
 const palette = ["#0D7869", "#B8842D", "#3C6E8F", "#8D5F47", "#637E51", "#755E9C"];
 const colorFor = (value: string) => palette[Array.from(value).reduce((total, char) => total + char.charCodeAt(0), 0) % palette.length];
 
@@ -38,6 +53,13 @@ export async function fetchR2Media(kind?: R2MediaAsset["kind"], reciterId?: stri
   const response = await fetch(url.toString());
   if (!response.ok) throw new Error("تعذر تحميل فهرس المكتبة الصوتية المعتمدة من R2.");
   const body = await response.json() as { items?: R2MediaAsset[] };
+  return body.items ?? [];
+}
+
+export async function fetchR2ContentSources() {
+  const response = await fetch(`${mediaApiBaseUrl()}/v1/sources`);
+  if (!response.ok) throw new Error("تعذر تحميل سجل حقوق المحتوى.");
+  const body = await response.json() as { items?: R2ContentSource[] };
   return body.items ?? [];
 }
 
