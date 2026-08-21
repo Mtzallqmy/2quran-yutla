@@ -5,8 +5,10 @@ import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
+import { sdk } from "./sdk";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
+import { uploadManagedAsset } from "../media-admin";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -60,6 +62,19 @@ async function startServer() {
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, timestamp: Date.now() });
+  });
+
+  app.put("/api/admin/assets/:assetId/file", express.raw({ type: ["audio/mpeg", "audio/mp3"], limit: "80mb" }), async (req, res) => {
+    try {
+      const user = await sdk.authenticateRequest(req).catch(() => null);
+      if (!user || user.role !== "admin") return res.status(403).json({ error: "لا تملك صلاحية إدارة مكتبة الوسائط." });
+      if (!Buffer.isBuffer(req.body)) return res.status(415).json({ error: "يلزم إرسال ملف MP3 خام." });
+      const durationHeader = Number(req.headers["x-duration-ms"] ?? 0);
+      const result = await uploadManagedAsset(req.params.assetId, req.body, "audio/mpeg", durationHeader > 0 ? durationHeader : undefined);
+      return res.status(201).json(result);
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : "تعذر رفع الملف الصوتي." });
+    }
   });
 
   app.use(

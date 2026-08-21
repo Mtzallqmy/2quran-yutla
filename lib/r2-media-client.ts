@@ -7,7 +7,13 @@ export type R2MediaAsset = {
   description?: string | null;
   reciterId?: string | null;
   reciterName?: string | null;
+  moshafId?: string | null;
+  moshafName?: string | null;
+  rewaya?: string | null;
+  qualityKbps?: number | null;
   surahNumber?: number | null;
+  originalUrl?: string | null;
+  bitrateKbps?: number | null;
   durationMs?: number | null;
   isDownloadable: number | boolean;
   bytes: number;
@@ -41,7 +47,7 @@ export function toAudioItem(asset: R2MediaAsset): AudioItem {
   return {
     id: asset.id,
     title: asset.title,
-    subtitle: asset.description || (reciter ? `${reciter} · السورة ${asset.surahNumber}` : "ملف مفهرس من المكتبة المركزية"),
+    subtitle: asset.description || (reciter ? `${reciter}${asset.moshafName ? ` · ${asset.moshafName}` : ""} · السورة ${asset.surahNumber}` : "ملف مفهرس من المكتبة المركزية"),
     category: kind === "reciter" ? "تلاوات" : kind === "station" ? "إذاعات" : "محتوى صوتي",
     streamUrl: asset.streamUrl,
     kind,

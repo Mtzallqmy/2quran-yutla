@@ -14,7 +14,13 @@ type AssetInput = {
   description?: string;
   reciterId?: string;
   reciterName?: string;
+  moshafId?: string;
+  moshafName?: string;
+  rewaya?: string;
+  qualityKbps?: number;
   surahNumber?: number;
+  originalUrl?: string;
+  attributionSnapshot?: string;
   isDownloadable?: boolean;
 };
 
@@ -68,8 +74,8 @@ function sanitizeSegment(value: string) {
 
 function logicalKey(input: AssetInput) {
   if (input.kind === "quran_surah") {
-    if (!input.reciterId || !input.surahNumber || input.surahNumber < 1 || input.surahNumber > 114) throw new Error("Quran surah needs a reciter and a valid surah number.");
-    return `quran/reciters/${sanitizeSegment(input.reciterId)}/${String(input.surahNumber).padStart(3, "0")}.mp3`;
+    if (!input.reciterId || !input.moshafId || !input.surahNumber || input.surahNumber < 1 || input.surahNumber > 114) throw new Error("Quran surah needs a reciter, moshaf and a valid surah number.");
+    return `quran/${sanitizeSegment(input.reciterId)}/${sanitizeSegment(input.moshafId)}/${String(input.surahNumber).padStart(3, "0")}.mp3`;
   }
   const prefix = input.kind === "radio_program" ? "radio/programs" : input.kind === "lecture" ? "lectures" : input.kind === "recording" ? "recordings" : "radio/jingles";
   return `${prefix}/${sanitizeSegment(input.id)}.mp3`;
@@ -77,7 +83,7 @@ function logicalKey(input: AssetInput) {
 
 function versionKey(asset: Record<string, unknown>, version: number, sha256: string) {
   const shortHash = sanitizeSegment(sha256.slice(0, 16));
-  if (asset.kind === "quran_surah") return `quran/reciters/${sanitizeSegment(String(asset.reciter_id))}/${String(asset.surah_number).padStart(3, "0")}/versions/v${version}-${shortHash}.mp3`;
+  if (asset.kind === "quran_surah") return `quran/${sanitizeSegment(String(asset.reciter_id))}/${sanitizeSegment(String(asset.moshaf_id))}/${String(asset.surah_number).padStart(3, "0")}/versions/v${version}-${shortHash}.mp3`;
   const root = String(asset.logical_key).replace(/\.mp3$/, "");
   return `${root}/versions/v${version}-${shortHash}.mp3`;
 }
@@ -99,7 +105,7 @@ async function findAsset(env: Env, assetId: string) {
 }
 
 async function activeMedia(env: Env, assetId: string) {
-  return env.CATALOG.prepare(`SELECT a.id, a.title, a.description, a.kind, a.is_downloadable, v.r2_key, v.content_type, v.bytes, v.etag, v.sha256 FROM media_assets a JOIN media_versions v ON v.id = a.current_version_id WHERE a.id = ? AND a.status = 'active' AND v.state = 'ready'`).bind(assetId).first<Record<string, unknown>>();
+  return env.CATALOG.prepare(`SELECT a.id, a.title, a.description, a.kind, a.is_downloadable, a.moshaf_id, v.r2_key, v.content_type, v.bytes, v.etag, v.sha256 FROM media_assets a JOIN media_versions v ON v.id = a.current_version_id WHERE a.id = ? AND a.status = 'active' AND v.state = 'ready'`).bind(assetId).first<Record<string, unknown>>();
 }
 
 async function streamAsset(request: Request, env: Env, assetId: string, download: boolean) {
@@ -140,12 +146,14 @@ async function createAsset(request: Request, env: Env) {
   if (existing) return json({ error: "معرّف الملف مستخدم بالفعل." }, 409, cors(env));
   try {
     if (input.kind === "quran_surah") {
-      if (!input.reciterId || !input.reciterName?.trim()) return json({ error: "يلزم reciterId وreciterName للتلاوة القرآنية." }, 422, cors(env));
+      if (!input.reciterId || !input.reciterName?.trim() || !input.moshafId || !input.moshafName?.trim()) return json({ error: "يلزم reciterId وreciterName وmoshafId وmoshafName للتلاوة القرآنية." }, 422, cors(env));
       await env.CATALOG.prepare("INSERT INTO reciters (id, name_ar, source_name, is_active, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?) ON CONFLICT(id) DO UPDATE SET name_ar = excluded.name_ar, source_name = excluded.source_name, is_active = 1, updated_at = excluded.updated_at")
         .bind(sanitizeSegment(input.reciterId), input.reciterName.trim(), String(source.name), now(), now()).run();
+      await env.CATALOG.prepare("INSERT INTO moshafs (id, reciter_id, slug, name, rewaya, quality_kbps, source_name, source_id, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, rewaya = excluded.rewaya, quality_kbps = excluded.quality_kbps, source_name = excluded.source_name, source_id = excluded.source_id, is_active = 1, updated_at = excluded.updated_at")
+        .bind(sanitizeSegment(input.moshafId), sanitizeSegment(input.reciterId), sanitizeSegment(input.moshafId), input.moshafName.trim(), input.rewaya?.trim() ?? null, input.qualityKbps ?? null, String(source.name), input.sourceId, now(), now()).run();
     }
-    await env.CATALOG.prepare(`INSERT INTO media_assets (id, source_id, attribution_snapshot, kind, logical_key, reciter_id, surah_number, title, description, is_downloadable, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`)
-      .bind(assetId, input.sourceId, source.attribution_text ?? null, input.kind, logical, input.reciterId ?? null, input.surahNumber ?? null, input.title, input.description ?? null, input.isDownloadable === false ? 0 : 1, now(), now()).run();
+    await env.CATALOG.prepare(`INSERT INTO media_assets (id, source_id, attribution_snapshot, kind, logical_key, reciter_id, moshaf_id, surah_number, title, description, original_url, bitrate_kbps, is_downloadable, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`)
+      .bind(assetId, input.sourceId, input.attributionSnapshot?.trim() || source.attribution_text || null, input.kind, logical, input.reciterId ?? null, input.moshafId ? sanitizeSegment(input.moshafId) : null, input.surahNumber ?? null, input.title, input.description ?? null, input.originalUrl ?? null, input.qualityKbps ?? null, input.isDownloadable === false ? 0 : 1, now(), now()).run();
     return json({ id: assetId, logicalKey: logical, status: "draft" }, 201, cors(env));
   } catch (error) { return json({ error: error instanceof Error ? error.message : "تعذر إنشاء الأصل." }, 400, cors(env)); }
 }
@@ -244,6 +252,30 @@ export default {
         const rows = await env.CATALOG.prepare("SELECT id, name, official_url AS officialUrl, terms_url AS termsUrl, license_label AS licenseLabel, rights_status AS rightsStatus, streaming_allowed AS streamingAllowed, download_allowed AS downloadAllowed, r2_redistribution_allowed AS r2RedistributionAllowed, attribution_required AS attributionRequired, attribution_text AS attributionText, reviewed_at AS reviewedAt FROM content_sources WHERE is_active = 1 ORDER BY name").all();
         return json({ items: rows.results }, 200, cors(env));
       }
+      if (request.method === "GET" && path === "/v1/quran/reciters") {
+        const rows = await env.CATALOG.prepare(`SELECT r.id, r.name_ar AS nameAr, r.name_en AS nameEn, COUNT(DISTINCT m.id) AS moshafCount, COUNT(DISTINCT a.id) AS trackCount FROM reciters r JOIN moshafs m ON m.reciter_id = r.id AND m.is_active = 1 JOIN media_assets a ON a.moshaf_id = m.id AND a.kind = 'quran_surah' AND a.status = 'active' JOIN media_versions v ON v.id = a.current_version_id AND v.state = 'ready' GROUP BY r.id ORDER BY r.name_ar`).all();
+        return json({ items: rows.results }, 200, cors(env));
+      }
+      const reciterMoshafsMatch = path.match(/^\/v1\/quran\/reciters\/([^/]+)\/moshafs$/);
+      if (request.method === "GET" && reciterMoshafsMatch) {
+        const rows = await env.CATALOG.prepare(`SELECT m.id, m.slug, m.name, m.rewaya, m.quality_kbps AS qualityKbps, m.source_name AS sourceName, COUNT(a.id) AS surahCount FROM moshafs m JOIN media_assets a ON a.moshaf_id = m.id AND a.kind = 'quran_surah' AND a.status = 'active' JOIN media_versions v ON v.id = a.current_version_id AND v.state = 'ready' WHERE m.reciter_id = ? AND m.is_active = 1 GROUP BY m.id ORDER BY m.name`).bind(reciterMoshafsMatch[1]).all();
+        return json({ items: rows.results }, 200, cors(env));
+      }
+      const moshafSurahsMatch = path.match(/^\/v1\/quran\/moshafs\/([^/]+)\/surahs$/);
+      if (request.method === "GET" && moshafSurahsMatch) {
+        const rows = await env.CATALOG.prepare(`SELECT a.id, a.surah_number AS surahNumber, s.name_ar AS surahName, a.title, a.description, a.duration_ms AS durationMs, a.bitrate_kbps AS bitrateKbps, a.original_url AS originalUrl, a.is_downloadable AS isDownloadable, v.bytes, v.sha256 FROM media_assets a JOIN media_versions v ON v.id = a.current_version_id JOIN surahs s ON s.number = a.surah_number WHERE a.moshaf_id = ? AND a.kind = 'quran_surah' AND a.status = 'active' AND v.state = 'ready' ORDER BY a.surah_number`).bind(moshafSurahsMatch[1]).all();
+        return json({ items: rows.results.map((row: any) => ({ ...row, streamUrl: `${url.origin}/v1/media/${row.id}/stream`, downloadUrl: row.isDownloadable ? `${url.origin}/v1/media/${row.id}/download` : null })) }, 200, cors(env));
+      }
+      const quranAudioMatch = path.match(/^\/v1\/quran\/audio\/([^/]+)\/(\d{1,3})$/);
+      if ((request.method === "GET" || request.method === "HEAD") && quranAudioMatch) {
+        const row = await env.CATALOG.prepare("SELECT id FROM media_assets WHERE moshaf_id = ? AND surah_number = ? AND kind = 'quran_surah' AND status = 'active'").bind(quranAudioMatch[1], Number(quranAudioMatch[2])).first<{ id?: string }>();
+        return row?.id ? streamAsset(request, env, row.id, false) : json({ error: "السورة غير متاحة في هذا المصحف." }, 404, cors(env));
+      }
+      const quranDownloadMatch = path.match(/^\/v1\/quran\/download\/([^/]+)\/(\d{1,3})$/);
+      if ((request.method === "GET" || request.method === "HEAD") && quranDownloadMatch) {
+        const row = await env.CATALOG.prepare("SELECT id FROM media_assets WHERE moshaf_id = ? AND surah_number = ? AND kind = 'quran_surah' AND status = 'active'").bind(quranDownloadMatch[1], Number(quranDownloadMatch[2])).first<{ id?: string }>();
+        return row?.id ? streamAsset(request, env, row.id, true) : json({ error: "السورة غير متاحة في هذا المصحف." }, 404, cors(env));
+      }
       const initMatch = path.match(/^\/v1\/admin\/assets\/([^/]+)\/uploads$/);
       if (request.method === "POST" && initMatch) return initUpload(request, env, initMatch[1]);
       const partMatch = path.match(/^\/v1\/admin\/uploads\/([^/]+)\/parts\/(\d+)$/);
@@ -257,7 +289,7 @@ export default {
       if (request.method === "GET" && path === "/v1/media") {
         const kind = url.searchParams.get("kind");
         const reciterId = url.searchParams.get("reciterId");
-        const rows = await env.CATALOG.prepare(`SELECT a.id, a.kind, a.title, a.description, a.reciter_id AS reciterId, r.name_ar AS reciterName, a.surah_number AS surahNumber, a.duration_ms AS durationMs, a.is_downloadable AS isDownloadable, v.bytes, v.sha256 FROM media_assets a JOIN media_versions v ON v.id = a.current_version_id LEFT JOIN reciters r ON r.id = a.reciter_id WHERE a.status = 'active' AND v.state = 'ready' AND (? IS NULL OR a.kind = ?) AND (? IS NULL OR a.reciter_id = ?) ORDER BY a.reciter_id, a.surah_number, a.title`).bind(kind, kind, reciterId, reciterId).all();
+        const rows = await env.CATALOG.prepare(`SELECT a.id, a.kind, a.title, a.description, a.reciter_id AS reciterId, r.name_ar AS reciterName, a.moshaf_id AS moshafId, m.name AS moshafName, m.rewaya, m.quality_kbps AS qualityKbps, a.surah_number AS surahNumber, a.duration_ms AS durationMs, a.original_url AS originalUrl, a.bitrate_kbps AS bitrateKbps, a.is_downloadable AS isDownloadable, v.bytes, v.sha256 FROM media_assets a JOIN media_versions v ON v.id = a.current_version_id LEFT JOIN reciters r ON r.id = a.reciter_id LEFT JOIN moshafs m ON m.id = a.moshaf_id WHERE a.status = 'active' AND v.state = 'ready' AND (? IS NULL OR a.kind = ?) AND (? IS NULL OR a.reciter_id = ?) ORDER BY a.reciter_id, a.moshaf_id, a.surah_number, a.title`).bind(kind, kind, reciterId, reciterId).all();
         return json({ items: rows.results.map((row: any) => ({ ...row, streamUrl: `${url.origin}/v1/media/${row.id}/stream`, downloadUrl: row.isDownloadable ? `${url.origin}/v1/media/${row.id}/download` : null })) }, 200, cors(env));
       }
       return json({ error: "Not found" }, 404, cors(env));

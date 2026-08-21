@@ -5,9 +5,19 @@ export type Surah = { number: number; name: string; englishName: string; numberO
 export type Reciter = {
   id: string;
   name: string;
+  moshafs: Moshaf[];
+  defaultMoshafId: string;
   availableSurahIds: number[];
   surahAssets: Record<number, R2MediaAsset>;
   source: "Cloudflare R2/D1";
+};
+export type Moshaf = {
+  id: string;
+  name: string;
+  rewaya?: string | null;
+  qualityKbps?: number | null;
+  availableSurahIds: number[];
+  surahAssets: Record<number, R2MediaAsset>;
 };
 export type AudioProgram = {
   id: string;
@@ -39,23 +49,48 @@ export function buildApprovedQuranCatalog(surahs: Surah[], assets: R2MediaAsset[
     const surahNumber = Number(asset.surahNumber);
     const reciterId = asset.reciterId?.trim();
     const reciterName = asset.reciterName?.trim();
+    const moshafId = asset.moshafId?.trim() || `${reciterId}-default`;
     if (asset.kind !== "quran_surah" || !reciterId || !reciterName || !Number.isInteger(surahNumber) || surahNumber < 1 || surahNumber > 114) continue;
 
     const existing = reciters.get(reciterId) ?? {
       id: reciterId,
       name: reciterName,
+      moshafs: [],
+      defaultMoshafId: moshafId,
       availableSurahIds: [],
       surahAssets: {},
       source: "Cloudflare R2/D1" as const,
     };
-    if (existing.surahAssets[surahNumber]) continue;
-    existing.surahAssets[surahNumber] = asset;
-    existing.availableSurahIds.push(surahNumber);
+    const moshaf = existing.moshafs.find((item) => item.id === moshafId) ?? {
+      id: moshafId,
+      name: asset.moshafName?.trim() || "مصحف معتمد",
+      rewaya: asset.rewaya,
+      qualityKbps: asset.qualityKbps,
+      availableSurahIds: [],
+      surahAssets: {},
+    };
+    if (!moshaf.surahAssets[surahNumber]) {
+      moshaf.surahAssets[surahNumber] = asset;
+      moshaf.availableSurahIds.push(surahNumber);
+    }
+    if (!existing.moshafs.some((item) => item.id === moshafId)) existing.moshafs.push(moshaf);
     reciters.set(reciterId, existing);
   }
 
   const approvedReciters = Array.from(reciters.values())
-    .map((reciter) => ({ ...reciter, availableSurahIds: reciter.availableSurahIds.sort((left, right) => left - right) }))
+    .map((reciter) => {
+      const moshafs = reciter.moshafs
+        .map((moshaf) => ({ ...moshaf, availableSurahIds: moshaf.availableSurahIds.sort((left, right) => left - right) }))
+        .sort((left, right) => left.name.localeCompare(right.name, "ar"));
+      const defaultMoshaf = moshafs.find((moshaf) => moshaf.id === reciter.defaultMoshafId) ?? moshafs[0];
+      return {
+        ...reciter,
+        moshafs,
+        defaultMoshafId: defaultMoshaf.id,
+        availableSurahIds: defaultMoshaf.availableSurahIds,
+        surahAssets: defaultMoshaf.surahAssets,
+      };
+    })
     .sort((left, right) => left.name.localeCompare(right.name, "ar"));
 
   const radios = assets
@@ -72,8 +107,9 @@ export function buildApprovedQuranCatalog(surahs: Surah[], assets: R2MediaAsset[
   };
 }
 
-export function getSurahAudioItem(reciter: Reciter, surah: Surah): AudioItem {
-  const asset = reciter.surahAssets[surah.number];
+export function getSurahAudioItem(reciter: Reciter, surah: Surah, moshafId?: string): AudioItem {
+  const moshaf = reciter.moshafs.find((item) => item.id === moshafId) ?? reciter.moshafs.find((item) => item.id === reciter.defaultMoshafId);
+  const asset = moshaf?.surahAssets[surah.number];
   if (!asset) throw new Error("السورة غير موجودة في فهرس الأصول المعتمدة لهذا القارئ.");
   return toAudioItem(asset);
 }
@@ -85,8 +121,10 @@ export function getRadioAudioItem(program: AudioProgram): AudioItem {
 export function findApprovedAudioItem(catalog: QuranCatalog | null, assetId: string): AudioItem | undefined {
   if (!catalog) return undefined;
   for (const reciter of catalog.reciters) {
-    for (const asset of Object.values(reciter.surahAssets)) {
-      if (asset.id === assetId) return toAudioItem(asset);
+    for (const moshaf of reciter.moshafs) {
+      for (const asset of Object.values(moshaf.surahAssets)) {
+        if (asset.id === assetId) return toAudioItem(asset);
+      }
     }
   }
   const program = catalog.radios.find((item) => item.asset.id === assetId);

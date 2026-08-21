@@ -20,29 +20,49 @@ CREATE TABLE IF NOT EXISTS surahs (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS moshafs (
+  id TEXT PRIMARY KEY,
+  reciter_id TEXT NOT NULL REFERENCES reciters(id),
+  slug TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  rewaya TEXT,
+  quality_kbps INTEGER CHECK (quality_kbps IS NULL OR quality_kbps > 0),
+  source_name TEXT NOT NULL DEFAULT 'internal',
+  source_id TEXT,
+  original_server_url TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS moshafs_reciter_idx ON moshafs(reciter_id, is_active);
+
 CREATE TABLE IF NOT EXISTS media_assets (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL CHECK (kind IN ('quran_surah', 'radio_program', 'lecture', 'recording', 'jingle')),
   logical_key TEXT NOT NULL UNIQUE,
   reciter_id TEXT REFERENCES reciters(id),
+  moshaf_id TEXT REFERENCES moshafs(id),
   surah_number INTEGER REFERENCES surahs(number),
   title TEXT NOT NULL,
   description TEXT,
+  original_url TEXT,
+  bitrate_kbps INTEGER CHECK (bitrate_kbps IS NULL OR bitrate_kbps > 0),
   duration_ms INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
   is_downloadable INTEGER NOT NULL DEFAULT 1 CHECK (is_downloadable IN (0, 1)),
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'archived')),
   current_version_id TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CHECK ((kind = 'quran_surah' AND reciter_id IS NOT NULL AND surah_number IS NOT NULL) OR kind <> 'quran_surah')
+  CHECK ((kind = 'quran_surah' AND reciter_id IS NOT NULL AND moshaf_id IS NOT NULL AND surah_number IS NOT NULL) OR kind <> 'quran_surah')
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS media_assets_surah_active_unique
-ON media_assets(reciter_id, surah_number)
+ON media_assets(moshaf_id, surah_number)
 WHERE kind = 'quran_surah' AND status <> 'archived';
 
 CREATE INDEX IF NOT EXISTS media_assets_kind_status_idx ON media_assets(kind, status);
-CREATE INDEX IF NOT EXISTS media_assets_reciter_idx ON media_assets(reciter_id, surah_number);
+CREATE INDEX IF NOT EXISTS media_assets_reciter_idx ON media_assets(reciter_id, moshaf_id, surah_number);
 
 CREATE TABLE IF NOT EXISTS media_versions (
   id TEXT PRIMARY KEY,
