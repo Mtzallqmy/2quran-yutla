@@ -1,0 +1,9 @@
+{
+  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  "name": "quran-yutla-media",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-04-01",
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "quran-yutla-media" }],
+  "d1_databases": [{ "binding": "CATALOG", "database_name": "quran-yutla-catalog", "database_id": "0f1669ce-f610-4fbb-81b1-d454a042660c" }],
+  "vars": { "PUBLIC_CACHE_SECONDS": "86400", "ALLOWED_ORIGIN": "*" }
+}

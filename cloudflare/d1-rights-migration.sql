@@ -1,0 +1,29 @@
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS content_sources (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  official_url TEXT NOT NULL,
+  terms_url TEXT NOT NULL,
+  license_label TEXT NOT NULL,
+  rights_status TEXT NOT NULL CHECK (rights_status IN ('r2_redistribution_allowed', 'stream_link_only', 'attribution_required', 'permission_required', 'review_required', 'prohibited')),
+  streaming_allowed INTEGER NOT NULL DEFAULT 0 CHECK (streaming_allowed IN (0, 1)),
+  download_allowed INTEGER NOT NULL DEFAULT 0 CHECK (download_allowed IN (0, 1)),
+  r2_redistribution_allowed INTEGER NOT NULL DEFAULT 0 CHECK (r2_redistribution_allowed IN (0, 1)),
+  attribution_required INTEGER NOT NULL DEFAULT 0 CHECK (attribution_required IN (0, 1)),
+  attribution_text TEXT,
+  written_permission_reference TEXT,
+  reviewed_at TEXT NOT NULL,
+  review_notes TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CHECK (r2_redistribution_allowed = 0 OR rights_status IN ('r2_redistribution_allowed', 'attribution_required')),
+  CHECK (attribution_required = 0 OR attribution_text IS NOT NULL)
+);
+
+ALTER TABLE media_assets ADD COLUMN source_id TEXT REFERENCES content_sources(id);
+ALTER TABLE media_assets ADD COLUMN attribution_snapshot TEXT;
+
+CREATE INDEX IF NOT EXISTS media_assets_source_idx ON media_assets(source_id);
+CREATE INDEX IF NOT EXISTS content_sources_rights_idx ON content_sources(rights_status, is_active);

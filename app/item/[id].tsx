@@ -1,17 +1,20 @@
 import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useMemo } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { ArtworkOrb } from "@/components/artwork-orb";
 import { ScreenContainer } from "@/components/screen-container";
 import { usePlayer } from "@/lib/player-context";
-import { getAudioItem } from "@/lib/quran-data";
+import { findApprovedAudioItem } from "@/lib/quran-catalog";
+import { useQuranContent } from "@/lib/quran-content-context";
 import { useQuranTheme } from "@/lib/quran-theme";
 
 export default function ItemDetailsScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const item = getAudioItem(id ?? "");
+  const { catalog } = useQuranContent();
+  const item = useMemo(() => findApprovedAudioItem(catalog, id ?? ""), [catalog, id]);
   const { colors } = useQuranTheme();
   const { current, isPlaying, favorites, playlists, playItem, togglePlayback, toggleFavorite, addToPlaylist } = usePlayer();
   if (!item) return <ScreenContainer style={{ backgroundColor: colors.background }}><View style={styles.empty}><Text style={[styles.emptyText, { color: colors.textMuted }]}>هذا المحتوى غير متاح.</Text><Pressable onPress={() => router.back()} style={[styles.return, { backgroundColor: colors.emerald }]}><Text style={styles.returnText}>عودة</Text></Pressable></View></ScreenContainer>;
