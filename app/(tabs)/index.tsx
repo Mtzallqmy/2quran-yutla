@@ -1,48 +1,26 @@
-import { ScrollView, Text, View, TouchableOpacity } from "react-native";
-
+import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
+import { useRouter } from "expo-router";
+import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { ArtworkOrb } from "@/components/artwork-orb";
+import { AudioCard } from "@/components/audio-card";
+import { SectionHeading } from "@/components/section-heading";
 import { ScreenContainer } from "@/components/screen-container";
+import { usePlayer } from "@/lib/player-context";
+import { allAudioItems, reciters, stations } from "@/lib/quran-data";
+import { useQuranTheme } from "@/lib/quran-theme";
 
-/**
- * Home Screen - NativeWind Example
- *
- * This template uses NativeWind (Tailwind CSS for React Native).
- * You can use familiar Tailwind classes directly in className props.
- *
- * Key patterns:
- * - Use `className` instead of `style` for most styling
- * - Theme colors: use tokens directly (bg-background, text-foreground, bg-primary, etc.); no dark: prefix needed
- * - Responsive: standard Tailwind breakpoints work on web
- * - Custom colors defined in tailwind.config.js
- */
 export default function HomeScreen() {
-  return (
-    <ScreenContainer className="p-6">
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
-        <View className="flex-1 gap-8">
-          {/* Hero Section */}
-          <View className="items-center gap-2">
-            <Text className="text-4xl font-bold text-foreground">Welcome</Text>
-            <Text className="text-base text-muted text-center">
-              Edit app/(tabs)/index.tsx to get started
-            </Text>
-          </View>
-
-          {/* Example Card */}
-          <View className="w-full max-w-sm self-center bg-surface rounded-2xl p-6 shadow-sm border border-border">
-            <Text className="text-lg font-semibold text-foreground mb-2">NativeWind Ready</Text>
-            <Text className="text-sm text-muted leading-relaxed">
-              Use Tailwind CSS classes directly in your React Native components.
-            </Text>
-          </View>
-
-          {/* Example Button */}
-          <View className="items-center">
-            <TouchableOpacity className="bg-primary px-6 py-3 rounded-full active:opacity-80">
-              <Text className="text-background font-semibold">Get Started</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </ScrollView>
-    </ScreenContainer>
-  );
+  const router = useRouter(); const { colors } = useQuranTheme(); const { current, isPlaying, recentIds, playItem, togglePlayback } = usePlayer();
+  const resume = current ?? stations[0]; const recent = recentIds.map((id) => allAudioItems.find((item) => item.id === id)).filter(Boolean) as typeof stations;
+  return <ScreenContainer style={{ backgroundColor: colors.background }}><FlatList data={recent.length ? recent : stations.slice(0, 2)} keyExtractor={(item) => item.id} renderItem={({ item }) => <AudioCard item={item} compact />} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}
+    ListHeaderComponent={<View>
+      <View style={styles.topline}><View style={[styles.mark, { backgroundColor: colors.goldSoft }]}><MaterialCommunityIcons name="book-open-page-variant" size={20} color={colors.gold} /></View><View style={styles.titleBlock}><Text style={[styles.brand, { color: colors.text }]}>قرآن يتلى</Text><Text style={[styles.by, { color: colors.textMuted }]}>من تطوير معتز العلقمي</Text></View></View>
+      <View style={[styles.hero, { backgroundColor: colors.emerald }]}><Text style={styles.heroGlyph}>۞</Text><Text style={styles.eyebrow}>رفيقك اليومي للاستماع</Text><Text style={styles.heroTitle}>افتح قلبك{`\n`}لتلاوة تلامس الروح</Text><Pressable onPress={() => void (current ? togglePlayback() : playItem(resume))} style={({ pressed }) => [styles.heroAction, pressed && styles.pressed]}><MaterialCommunityIcons name={current && isPlaying ? "pause" : "play"} size={21} color={colors.emerald} /><Text style={[styles.heroActionText, { color: colors.emerald }]}>{current && isPlaying ? "إيقاف مؤقت" : "ابدأ الاستماع"}</Text></Pressable></View>
+      <Pressable onPress={() => void (current ? togglePlayback() : playItem(resume))} style={({ pressed }) => [styles.resume, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && styles.pressed]}><View style={[styles.resumePlay, { backgroundColor: colors.emerald }]}><MaterialCommunityIcons name={current && isPlaying ? "pause" : "play"} size={22} color="#FFF" /></View><View style={styles.resumeCopy}><Text style={[styles.resumeLabel, { color: colors.gold }]}>أكمل استماعك</Text><Text numberOfLines={1} style={[styles.resumeTitle, { color: colors.text }]}>{resume.title}</Text><Text numberOfLines={1} style={[styles.resumeSub, { color: colors.textMuted }]}>{resume.subtitle}</Text></View><ArtworkOrb color={resume.color} kind={resume.kind} size={48} /></Pressable>
+      <View style={styles.shortcuts}>{[["إذاعات", "radio", "/(tabs)/listen"], ["القراء", "account-voice", "/(tabs)/reciters"], ["مكتبتي", "heart-outline", "/(tabs)/library"]].map(([label, icon, path]) => <Pressable key={label} onPress={() => router.push(path as never)} style={({ pressed }) => [styles.shortcut, { backgroundColor: colors.surfaceMuted }, pressed && styles.pressed]}><MaterialCommunityIcons name={icon as never} size={22} color={colors.emerald} /><Text style={[styles.shortcutText, { color: colors.text }]}>{label}</Text></Pressable>)}</View>
+      <View style={styles.section}><SectionHeading eyebrow="استمرارك" title={recent.length ? "استمعت إليها مؤخرًا" : "محطات مقترحة"} /></View>
+    </View>}
+    ListFooterComponent={<View style={styles.footer}><SectionHeading eyebrow="اختيار اليوم" title="قارئ مختار" /><AudioCard item={reciters[1]} /></View>} />
+  </ScreenContainer>;
 }
+const styles = StyleSheet.create({ content: { padding: 18, paddingBottom: 178 }, topline: { flexDirection: "row-reverse", alignItems: "center", marginBottom: 18 }, mark: { width: 42, height: 42, borderRadius: 15, alignItems: "center", justifyContent: "center" }, titleBlock: { flex: 1, alignItems: "flex-end", marginRight: 10 }, brand: { fontSize: 23, lineHeight: 29, fontWeight: "900" }, by: { fontSize: 11, lineHeight: 17 }, hero: { minHeight: 220, borderRadius: 30, padding: 24, overflow: "hidden", alignItems: "flex-end", justifyContent: "center" }, heroGlyph: { position: "absolute", left: -10, top: -36, color: "rgba(255,255,255,.15)", fontSize: 210, lineHeight: 220 }, eyebrow: { color: "#D7F4EA", fontSize: 12, fontWeight: "800", marginBottom: 8 }, heroTitle: { color: "#FFF", fontSize: 29, lineHeight: 38, textAlign: "right", fontWeight: "900" }, heroAction: { marginTop: 18, height: 46, borderRadius: 16, paddingHorizontal: 16, backgroundColor: "#FFF", flexDirection: "row-reverse", gap: 7, alignItems: "center" }, heroActionText: { fontSize: 13, fontWeight: "900" }, resume: { marginTop: 14, padding: 12, borderRadius: 24, borderWidth: 1, flexDirection: "row-reverse", alignItems: "center" }, resumePlay: { width: 42, height: 42, borderRadius: 21, justifyContent: "center", alignItems: "center" }, resumeCopy: { flex: 1, alignItems: "flex-end", marginHorizontal: 10 }, resumeLabel: { fontSize: 11, fontWeight: "800" }, resumeTitle: { width: "100%", fontSize: 15, fontWeight: "900", textAlign: "right", marginTop: 2 }, resumeSub: { width: "100%", fontSize: 11, textAlign: "right", marginTop: 2 }, shortcuts: { flexDirection: "row-reverse", gap: 10, marginTop: 14 }, shortcut: { flex: 1, height: 78, borderRadius: 22, alignItems: "center", justifyContent: "center", gap: 6 }, shortcutText: { fontSize: 12, fontWeight: "800" }, section: { marginTop: 26 }, footer: { marginTop: 16 }, pressed: { opacity: .75, transform: [{ scale: .98 }] } });

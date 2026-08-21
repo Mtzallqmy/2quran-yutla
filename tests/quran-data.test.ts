@@ -1,0 +1,3 @@
+import { describe, expect, it } from "vitest";
+import { allAudioItems, categories, getAudioItem } from "../lib/quran-data";
+describe("quran catalog", () => { it("keeps starter catalog identifiers unique and secure", () => { const ids = allAudioItems.map((item) => item.id); expect(new Set(ids).size).toBe(ids.length); expect(allAudioItems.every((item) => item.streamUrl.startsWith("https://"))).toBe(true); }); it("resolves a known station and its categories", () => { expect(getAudioItem("quran-live")?.title).toBe("إذاعة القرآن الكريم"); expect(categories).toContain("إذاعات"); expect(categories).toContain("تلاوات"); }); });

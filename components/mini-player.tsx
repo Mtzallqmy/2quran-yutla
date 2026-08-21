@@ -1,0 +1,12 @@
+import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
+import { useRouter } from "expo-router";
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import { ArtworkOrb } from "@/components/artwork-orb";
+import { usePlayer } from "@/lib/player-context";
+import { useQuranTheme } from "@/lib/quran-theme";
+
+export function MiniPlayer() {
+  const router = useRouter(); const { colors } = useQuranTheme(); const { current, isPlaying, togglePlayback } = usePlayer(); if (!current) return null;
+  return <View style={[styles.shell, { backgroundColor: colors.surface, borderColor: colors.border }]}><Pressable onPress={() => router.push("/player" as never)} style={({ pressed }) => [styles.info, pressed && styles.pressed]}><ArtworkOrb color={current.color} kind={current.kind} size={40} /><View style={styles.copy}><Text numberOfLines={1} style={[styles.title, { color: colors.text }]}>{current.title}</Text><Text numberOfLines={1} style={[styles.subtitle, { color: colors.textMuted }]}>{isPlaying ? "يتم التشغيل الآن" : "متوقف مؤقتًا"}</Text></View></Pressable><Pressable onPress={togglePlayback} style={({ pressed }) => [styles.button, { backgroundColor: colors.emerald }, pressed && styles.pressed]}><MaterialCommunityIcons name={isPlaying ? "pause" : "play"} size={24} color="#FFFFFF" /></Pressable></View>;
+}
+const styles = StyleSheet.create({ shell: { position: "absolute", left: 16, right: 16, bottom: 80, minHeight: 66, borderRadius: 22, borderWidth: 1, padding: 9, flexDirection: "row", alignItems: "center", shadowColor: "#000", shadowOpacity: .16, shadowOffset: { width: 0, height: 6 }, shadowRadius: 16, elevation: 8 }, info: { flex: 1, flexDirection: "row", alignItems: "center" }, copy: { flex: 1, alignItems: "flex-end", marginHorizontal: 10 }, title: { width: "100%", textAlign: "right", fontWeight: "800", fontSize: 14, lineHeight: 20 }, subtitle: { width: "100%", textAlign: "right", fontSize: 11, marginTop: 2, lineHeight: 16 }, button: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" }, pressed: { opacity: .75, transform: [{ scale: .97 }] } });

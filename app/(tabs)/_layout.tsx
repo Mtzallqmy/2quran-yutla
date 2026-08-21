@@ -1,40 +1,8 @@
+import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import { Tabs } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-
-import { HapticTab } from "@/components/haptic-tab";
-import { IconSymbol } from "@/components/ui/icon-symbol";
 import { Platform } from "react-native";
-import { useColors } from "@/hooks/use-colors";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useQuranTheme } from "@/lib/quran-theme";
 
-export default function TabLayout() {
-  const colors = useColors();
-  const insets = useSafeAreaInsets();
-  const bottomPadding = Platform.OS === "web" ? 12 : Math.max(insets.bottom, 8);
-  const tabBarHeight = 56 + bottomPadding;
-
-  return (
-    <Tabs
-      screenOptions={{
-        tabBarActiveTintColor: colors.tint,
-        headerShown: false,
-        tabBarButton: HapticTab,
-        tabBarStyle: {
-          paddingTop: 8,
-          paddingBottom: bottomPadding,
-          height: tabBarHeight,
-          backgroundColor: colors.background,
-          borderTopColor: colors.border,
-          borderTopWidth: 0.5,
-        },
-      }}
-    >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: "Home",
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
-        }}
-      />
-    </Tabs>
-  );
-}
+const items = [{ name: "index", title: "الرئيسية", icon: "home-variant" }, { name: "listen", title: "استمع", icon: "radio" }, { name: "reciters", title: "القراء", icon: "account-voice" }, { name: "library", title: "مكتبتي", icon: "library-shelves" }, { name: "settings", title: "إعدادات", icon: "cog-outline" }] as const;
+export default function TabLayout() { const { colors } = useQuranTheme(); const insets = useSafeAreaInsets(); const bottom = Platform.OS === "web" ? 8 : Math.max(insets.bottom, 8); return <Tabs screenOptions={{ headerShown: false, tabBarActiveTintColor: colors.emerald, tabBarInactiveTintColor: colors.textMuted, tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border, height: 58 + bottom, paddingTop: 7, paddingBottom: bottom }, tabBarLabelStyle: { fontSize: 10, fontWeight: "800" } }}>{items.map((item) => <Tabs.Screen key={item.name} name={item.name} options={{ title: item.title, tabBarIcon: ({ color, size }) => <MaterialCommunityIcons name={item.icon} color={color} size={size} /> }} />)}</Tabs>; }
