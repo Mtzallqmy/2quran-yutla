@@ -5,12 +5,12 @@ import { fetchQuranCatalog, type QuranCatalog } from "@/lib/quran-catalog";
 
 type ContentState = { catalog: QuranCatalog | null; loading: boolean; error: string | null; refresh: () => Promise<void> };
 const Context = createContext<ContentState | undefined>(undefined);
-const CACHE_KEY = "quran-yutla:catalog-v3";
+const CACHE_KEY = "quran-yutla:catalog-v4";
 
 function isApprovedCatalog(value: unknown): value is QuranCatalog {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<QuranCatalog>;
-  return candidate.source === "Cloudflare R2/D1" && Array.isArray(candidate.surahs) && Array.isArray(candidate.reciters) && Array.isArray(candidate.radios);
+  return candidate.source === "Cloudflare R2/D1" && Array.isArray(candidate.surahs) && Array.isArray(candidate.reciters) && Array.isArray(candidate.radios) && candidate.reciters.every((reciter) => typeof reciter === "object" && reciter !== null && Array.isArray((reciter as { moshafs?: unknown }).moshafs));
 }
 
 export function QuranContentProvider({ children }: PropsWithChildren) {

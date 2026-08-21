@@ -108,8 +108,9 @@ export function buildApprovedQuranCatalog(surahs: Surah[], assets: R2MediaAsset[
 }
 
 export function getSurahAudioItem(reciter: Reciter, surah: Surah, moshafId?: string): AudioItem {
-  const moshaf = reciter.moshafs.find((item) => item.id === moshafId) ?? reciter.moshafs.find((item) => item.id === reciter.defaultMoshafId);
-  const asset = moshaf?.surahAssets[surah.number];
+  const moshafs = Array.isArray(reciter.moshafs) ? reciter.moshafs : [];
+  const moshaf = moshafs.find((item) => item.id === moshafId) ?? moshafs.find((item) => item.id === reciter.defaultMoshafId);
+  const asset = moshaf?.surahAssets[surah.number] ?? reciter.surahAssets?.[surah.number];
   if (!asset) throw new Error("السورة غير موجودة في فهرس الأصول المعتمدة لهذا القارئ.");
   return toAudioItem(asset);
 }
@@ -121,7 +122,7 @@ export function getRadioAudioItem(program: AudioProgram): AudioItem {
 export function findApprovedAudioItem(catalog: QuranCatalog | null, assetId: string): AudioItem | undefined {
   if (!catalog) return undefined;
   for (const reciter of catalog.reciters) {
-    for (const moshaf of reciter.moshafs) {
+    for (const moshaf of Array.isArray(reciter.moshafs) ? reciter.moshafs : []) {
       for (const asset of Object.values(moshaf.surahAssets)) {
         if (asset.id === assetId) return toAudioItem(asset);
       }
