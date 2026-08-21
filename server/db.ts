@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
+import { appOwnerClaims, InsertUser, users } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -87,6 +87,32 @@ export async function getUserByOpenId(openId: string) {
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
 
   return result.length > 0 ? result[0] : undefined;
+}
+
+export async function getOwnerBootstrapState(userId?: number) {
+  const db = await getDb();
+  if (!db) return { hasOwner: Boolean(ENV.ownerOpenId), isOwner: false, canClaim: false };
+  const claimed = await db.select().from(appOwnerClaims).limit(1);
+  const admins = await db.select({ id: users.id }).from(users).where(eq(users.role, "admin")).limit(1);
+  const ownerId = claimed[0]?.userId ?? admins[0]?.id ?? null;
+  return { hasOwner: ownerId !== null, isOwner: userId !== undefined && ownerId === userId, canClaim: ownerId === null };
+}
+
+export async function claimFirstOwner(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة بيانات التطبيق غير متاحة لتعيين المالك.");
+  return db.transaction(async (tx) => {
+    const current = await tx.select().from(appOwnerClaims).limit(1);
+    const existingAdmin = await tx.select({ id: users.id }).from(users).where(eq(users.role, "admin")).limit(1);
+    const ownerId = current[0]?.userId ?? existingAdmin[0]?.id;
+    if (ownerId !== undefined) {
+      if (ownerId === userId) return { status: "already_owner" as const };
+      throw new Error("تم تعيين مالك للتطبيق بالفعل ولا يمكن استبداله من الواجهة.");
+    }
+    await tx.insert(appOwnerClaims).values({ singletonId: 1, userId });
+    await tx.update(users).set({ role: "admin" }).where(eq(users.id, userId));
+    return { status: "claimed" as const };
+  });
 }
 
 // TODO: add feature queries here as your schema grows.

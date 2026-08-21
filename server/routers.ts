@@ -1,8 +1,9 @@
 import { COOKIE_NAME } from "../shared/const.js";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { adminProcedure, publicProcedure, router } from "./_core/trpc";
+import { adminProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { auditAaqibCommons, createManagedAsset, createManagedSource, importCommonsCandidate } from "./media-admin";
+import { claimFirstOwner, getOwnerBootstrapState } from "./db";
 import { z } from "zod";
 
 export const appRouter = router({
@@ -17,6 +18,10 @@ export const appRouter = router({
         success: true,
       } as const;
     }),
+  }),
+  owner: router({
+    bootstrapStatus: publicProcedure.query(({ ctx }) => getOwnerBootstrapState(ctx.user?.id)),
+    claimFirst: protectedProcedure.mutation(({ ctx }) => claimFirstOwner(ctx.user.id)),
   }),
   mediaAdmin: router({
     auditCommons: adminProcedure.query(() => auditAaqibCommons()),
