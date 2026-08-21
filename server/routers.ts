@@ -2,7 +2,7 @@ import { COOKIE_NAME } from "../shared/const.js";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { adminProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { auditAaqibCommons, createManagedAsset, createManagedSource, importCommonsCandidate } from "./media-admin";
+import { addManagedStationItem, auditAaqibCommons, createManagedAsset, createManagedSource, createManagedStation, importCommonsCandidate, updateManagedAssetPublication, upsertManagedReciter } from "./media-admin";
 import { claimFirstOwner, getOwnerBootstrapState } from "./db";
 import { z } from "zod";
 
@@ -45,6 +45,17 @@ export const appRouter = router({
         sourceId: z.string().min(3), attributionSnapshot: z.string().nullable(),
       }))
       .mutation(({ input }) => importCommonsCandidate(input)),
+    createStation: adminProcedure.input(z.object({
+      id: z.string().min(3).max(80), title: z.string().min(3).max(120), description: z.string().max(500).optional(),
+      timezone: z.string().min(2).max(64).optional(), rotationAnchorAt: z.string().datetime().optional(),
+      status: z.enum(["draft", "published", "hidden", "archived"]),
+    })).mutation(({ input }) => createManagedStation(input)),
+    addStationItem: adminProcedure.input(z.object({ stationId: z.string().min(3), assetId: z.string().min(3), sortOrder: z.number().int().min(0).max(1_000_000).optional(), isActive: z.boolean().optional() }))
+      .mutation(({ input }) => addManagedStationItem(input.stationId, { assetId: input.assetId, sortOrder: input.sortOrder, isActive: input.isActive })),
+    updatePublication: adminProcedure.input(z.object({ assetId: z.string().min(3), publicationStatus: z.enum(["draft", "published", "hidden", "archived"]), sortOrder: z.number().int().min(0).max(1_000_000).optional() }))
+      .mutation(({ input }) => updateManagedAssetPublication(input.assetId, { publicationStatus: input.publicationStatus, sortOrder: input.sortOrder })),
+    upsertReciter: adminProcedure.input(z.object({ id: z.string().min(3).max(80), nameAr: z.string().min(2).max(160), nameEn: z.string().max(160).optional(), description: z.string().max(1000).optional(), sortOrder: z.number().int().min(0).max(1_000_000).optional(), publicationStatus: z.enum(["draft", "published", "hidden", "archived"]), isActive: z.boolean().optional() }))
+      .mutation(({ input }) => upsertManagedReciter(input)),
   }),
 
   // TODO: add feature routers here, e.g.

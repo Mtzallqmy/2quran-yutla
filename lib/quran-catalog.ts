@@ -1,4 +1,4 @@
-import { fetchR2Media, toAudioItem, type R2MediaAsset } from "./r2-media-client";
+import { fetchR2Media, fetchRadioStations, mediaApiBaseUrl, toAudioItem, type RadioStation, type R2MediaAsset } from "./r2-media-client";
 import type { AudioItem } from "./quran-data";
 
 export type Surah = { number: number; name: string; englishName: string; numberOfAyahs: number; revelationType: "Meccan" | "Medinan" };
@@ -30,19 +30,20 @@ export type QuranCatalog = {
   surahs: Surah[];
   reciters: Reciter[];
   radios: AudioProgram[];
+  stations: RadioStation[];
   approvedAssetCount: number;
   loadedAt: string;
 };
 
-const SURAH_API = "https://api.alquran.cloud/v1/surah";
-
-function normalizeSurahs(payload: { data?: Surah[] }) {
-  return (payload.data ?? [])
+function normalizeSurahs(payload: { items?: Surah[] }) {
+  return (payload.items ?? [])
     .filter((surah) => Number.isInteger(surah.number) && surah.number >= 1 && surah.number <= 114 && Boolean(surah.name))
     .sort((left, right) => left.number - right.number);
 }
 
-export function buildApprovedQuranCatalog(surahs: Surah[], assets: R2MediaAsset[], loadedAt = new Date().toISOString()): QuranCatalog {
+export function buildApprovedQuranCatalog(surahs: Surah[], assets: R2MediaAsset[], stationsOrLoadedAt: RadioStation[] | string = [], loadedAt = new Date().toISOString()): QuranCatalog {
+  const stations = Array.isArray(stationsOrLoadedAt) ? stationsOrLoadedAt : [];
+  const resolvedLoadedAt = typeof stationsOrLoadedAt === "string" ? stationsOrLoadedAt : loadedAt;
   const reciters = new Map<string, Reciter>();
 
   for (const asset of assets) {
@@ -102,8 +103,9 @@ export function buildApprovedQuranCatalog(surahs: Surah[], assets: R2MediaAsset[
     surahs: [...surahs].sort((left, right) => left.number - right.number),
     reciters: approvedReciters,
     radios,
+    stations,
     approvedAssetCount: assets.length,
-    loadedAt,
+    loadedAt: resolvedLoadedAt,
   };
 }
 
@@ -133,9 +135,9 @@ export function findApprovedAudioItem(catalog: QuranCatalog | null, assetId: str
 }
 
 export async function fetchQuranCatalog(): Promise<QuranCatalog> {
-  const [surahResponse, assets] = await Promise.all([fetch(SURAH_API), fetchR2Media()]);
+  const [surahResponse, assets, stations] = await Promise.all([fetch(`${mediaApiBaseUrl()}/v1/quran/surahs`), fetchR2Media(), fetchRadioStations()]);
   if (!surahResponse.ok) throw new Error("تعذر تحميل فهرس سور القرآن.");
-  const surahs = normalizeSurahs(await surahResponse.json() as { data?: Surah[] });
+  const surahs = normalizeSurahs(await surahResponse.json() as { items?: Surah[] });
   if (surahs.length !== 114) throw new Error("مصدر فهرس السور أعاد بيانات غير مكتملة؛ لم يتم اعتمادها داخل التطبيق.");
-  return buildApprovedQuranCatalog(surahs, assets);
+  return buildApprovedQuranCatalog(surahs, assets, stations);
 }

@@ -18,9 +18,20 @@ export type R2MediaAsset = {
   isDownloadable: number | boolean;
   bytes: number;
   sha256: string;
+  contentVersion?: number;
+  updatedAt?: string;
   streamUrl: string;
   downloadUrl?: string | null;
 };
+
+export type RadioStation = { id: string; title: string; description?: string | null; artworkStorageKey?: string | null; timezone: string; rotationAnchorAt: string; contentVersion: number; updatedAt: string; playlistCount: number };
+export type RadioStationNow = {
+  station: { id: string; title: string; description?: string | null; timezone: string; contentVersion: number };
+  now: { asset: R2MediaAsset; startOffsetMs: number; startsAt: string; endsAt: string };
+  next: { asset: R2MediaAsset };
+  serverTime: string;
+};
+export type ContentManifest = { revision: string | null; counts: { reciters: number; moshafs: number; assets: number; stations: number } };
 
 export type R2ContentSource = {
   id: string;
@@ -61,6 +72,26 @@ export async function fetchR2ContentSources() {
   if (!response.ok) throw new Error("تعذر تحميل سجل حقوق المحتوى.");
   const body = await response.json() as { items?: R2ContentSource[] };
   return body.items ?? [];
+}
+
+export async function fetchRadioStations() {
+  const response = await fetch(`${mediaApiBaseUrl()}/v1/radio/stations`);
+  if (!response.ok) throw new Error("تعذر تحميل محطات إذاعة التطبيق.");
+  const body = await response.json() as { items?: RadioStation[] };
+  return body.items ?? [];
+}
+
+export async function fetchContentManifest(etag?: string | null) {
+  const response = await fetch(`${mediaApiBaseUrl()}/v1/content/manifest`, { headers: etag ? { "if-none-match": etag } : {}, cache: "no-store" });
+  if (response.status === 304) return { notModified: true as const, etag: response.headers.get("etag") ?? etag ?? null, manifest: null };
+  if (!response.ok) throw new Error("تعذر التحقق من إصدار فهرس المحتوى.");
+  return { notModified: false as const, etag: response.headers.get("etag"), manifest: await response.json() as ContentManifest };
+}
+
+export async function fetchRadioStationNow(stationId: string) {
+  const response = await fetch(`${mediaApiBaseUrl()}/v1/radio/stations/${encodeURIComponent(stationId)}/now`, { cache: "no-store" });
+  if (!response.ok) throw new Error("تعذر تحميل البرنامج الجاري للمحطة.");
+  return response.json() as Promise<RadioStationNow>;
 }
 
 export function toAudioItem(asset: R2MediaAsset): AudioItem {

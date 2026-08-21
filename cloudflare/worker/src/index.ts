@@ -48,22 +48,42 @@ type UploadInput = {
   durationMs?: number;
 };
 
+type StationInput = { id: string; title: string; description?: string; timezone?: string; rotationAnchorAt?: string; status?: "draft" | "published" | "hidden" | "archived" };
+type StationItemInput = { assetId: string; sortOrder?: number; isActive?: boolean };
+type PublicationInput = { publicationStatus: "draft" | "published" | "hidden" | "archived"; sortOrder?: number };
+type ReciterInput = { id: string; nameAr: string; nameEn?: string; description?: string; sortOrder?: number; publicationStatus?: "draft" | "published" | "hidden" | "archived"; isActive?: boolean };
+
+
 const json = (body: unknown, status = 200, headers: HeadersInit = {}) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", ...headers } });
 const id = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
 const asNumber = (value: unknown) => Number(value ?? 0);
 
+function publicEtag(value: string) {
+  let hash = 5381;
+  for (let index = 0; index < value.length; index += 1) hash = ((hash << 5) + hash) ^ value.charCodeAt(index);
+  return `"quran-yutla-${(hash >>> 0).toString(16)}"`;
+}
+
+function publicJson(request: Request, body: unknown, lastModified?: string | null, maxAge = 60, headers: HeadersInit = {}) {
+  const encoded = JSON.stringify(body);
+  const etag = publicEtag(encoded);
+  const responseHeaders = { "content-type": "application/json; charset=utf-8", "cache-control": `public, max-age=${maxAge}`, etag, ...(lastModified ? { "last-modified": new Date(lastModified).toUTCString() } : {}), ...headers };
+  if (request.headers.get("if-none-match")?.replace(/^W\//, "") === etag) return new Response(null, { status: 304, headers: responseHeaders });
+  return new Response(request.method === "HEAD" ? null : encoded, { status: 200, headers: responseHeaders });
+}
+
 function cors(env: Env) {
   return {
     "access-control-allow-origin": env.ALLOWED_ORIGIN || "*",
-    "access-control-allow-methods": "GET,POST,PUT,OPTIONS",
-    "access-control-allow-headers": "Authorization,Content-Type,Idempotency-Key,X-Part-SHA256",
+    "access-control-allow-methods": "GET,POST,PUT,PATCH,OPTIONS",
+    "access-control-allow-headers": "Authorization,Content-Type,Idempotency-Key,X-Part-SHA256,X-Original-Url,X-Attribution-Snapshot",
   };
 }
 
-function requireAdmin(request: Request, env: Env) {
+function requireAdmin(request: Request, env: Env): Response | null {
   const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-  if (!env.ADMIN_TOKEN || token !== env.ADMIN_TOKEN) throw new Response("Unauthorized", { status: 401 });
+  return !env.ADMIN_TOKEN || token !== env.ADMIN_TOKEN ? json({ error: "Unauthorized" }, 401, cors(env)) : null;
 }
 
 function sanitizeSegment(value: string) {
@@ -133,7 +153,7 @@ async function streamAsset(request: Request, env: Env, assetId: string, download
 }
 
 async function createAsset(request: Request, env: Env) {
-  requireAdmin(request, env);
+  const denied = requireAdmin(request, env); if (denied) return denied;
   const input = await readJson<AssetInput>(request);
   if (!input.id || !input.title || !input.sourceId) return json({ error: "id, title and sourceId are required" }, 400, cors(env));
   const source = await env.CATALOG.prepare("SELECT * FROM content_sources WHERE id = ? AND is_active = 1").bind(input.sourceId).first<Record<string, unknown>>();
@@ -159,7 +179,7 @@ async function createAsset(request: Request, env: Env) {
 }
 
 async function createSource(request: Request, env: Env) {
-  requireAdmin(request, env);
+  const denied = requireAdmin(request, env); if (denied) return denied;
   const input = await readJson<SourceInput>(request);
   const rightsStatuses = new Set<SourceInput["rightsStatus"]>(["r2_redistribution_allowed", "stream_link_only", "attribution_required", "permission_required", "review_required", "prohibited"]);
   if (!input.id || !input.name || !input.officialUrl || !input.termsUrl || !input.licenseLabel || !input.reviewNotes || !rightsStatuses.has(input.rightsStatus)) {
@@ -178,7 +198,7 @@ async function createSource(request: Request, env: Env) {
 }
 
 async function initUpload(request: Request, env: Env, assetId: string) {
-  requireAdmin(request, env);
+  const denied = requireAdmin(request, env); if (denied) return denied;
   const input = await readJson<UploadInput>(request);
   if (!input.idempotencyKey || !input.expectedSha256 || !input.expectedBytes || !input.contentType.startsWith("audio/")) return json({ error: "معلومات الرفع غير مكتملة." }, 400, cors(env));
   const asset = await findAsset(env, assetId);
@@ -199,7 +219,7 @@ async function initUpload(request: Request, env: Env, assetId: string) {
 }
 
 async function uploadPart(request: Request, env: Env, sessionId: string, partNumber: number) {
-  requireAdmin(request, env);
+  const denied = requireAdmin(request, env); if (denied) return denied;
   const session = await env.CATALOG.prepare("SELECT * FROM upload_sessions WHERE id = ? AND state IN ('pending', 'uploaded') AND expires_at > CURRENT_TIMESTAMP").bind(sessionId).first<Record<string, unknown>>();
   if (!session || !session.r2_key || !session.r2_upload_id) return json({ error: "جلسة الرفع غير صالحة أو منتهية." }, 404, cors(env));
   const declared = request.headers.get("x-part-sha256") ?? ""; let checksum: ArrayBuffer;
@@ -220,7 +240,7 @@ async function uploadPart(request: Request, env: Env, sessionId: string, partNum
 }
 
 async function completeUpload(request: Request, env: Env, sessionId: string) {
-  requireAdmin(request, env);
+  const denied = requireAdmin(request, env); if (denied) return denied;
   const session = await env.CATALOG.prepare("SELECT * FROM upload_sessions WHERE id = ? AND state = 'uploaded' AND expires_at > CURRENT_TIMESTAMP").bind(sessionId).first<Record<string, unknown>>();
   if (!session || !session.r2_key || !session.r2_upload_id) return json({ error: "جلسة الرفع غير قابلة للإكمال." }, 404, cors(env));
   const parts = await env.CATALOG.prepare("SELECT part_number, etag, bytes FROM upload_parts WHERE session_id = ? ORDER BY part_number ASC").bind(sessionId).all<{ part_number: number; etag: string; bytes: number }>();
@@ -240,40 +260,190 @@ async function completeUpload(request: Request, env: Env, sessionId: string) {
   } catch (error) { return json({ error: error instanceof Error ? error.message : "تعذر إكمال الرفع." }, 400, cors(env)); }
 }
 
+function stationAsset(row: Record<string, unknown>, origin: string) {
+  const assetId = String(row.id);
+  return {
+    id: assetId, kind: "radio_program", title: row.title, description: row.description, durationMs: Number(row.duration_ms), isDownloadable: Number(row.is_downloadable) === 1, bytes: Number(row.bytes), sha256: row.sha256,
+    streamUrl: `${origin}/v1/media/${assetId}/stream`, downloadUrl: Number(row.is_downloadable) === 1 ? `${origin}/v1/media/${assetId}/download` : null,
+  };
+}
+
+async function stationItems(env: Env, stationId: string) {
+  const rows = await env.CATALOG.prepare(`SELECT a.id, a.title, a.description, a.duration_ms, a.is_downloadable, v.bytes, v.sha256
+    FROM radio_playlist_items p JOIN media_assets a ON a.id = p.media_asset_id JOIN media_versions v ON v.id = a.current_version_id
+    JOIN content_sources s ON s.id = a.source_id
+    WHERE p.station_id = ? AND p.is_active = 1 AND a.status = 'active' AND a.publication_status = 'published' AND v.state = 'ready' AND s.streaming_allowed = 1 AND a.duration_ms > 0
+    ORDER BY p.sort_order, p.id`).bind(stationId).all<Record<string, unknown>>();
+  return rows.results as Record<string, unknown>[];
+}
+
+async function listStations(request: Request, env: Env) {
+  const rows = await env.CATALOG.prepare(`SELECT s.id, s.title, s.description, s.artwork_storage_key AS artworkStorageKey, s.timezone, s.rotation_anchor_at AS rotationAnchorAt, s.content_version AS contentVersion, s.updated_at AS updatedAt, COUNT(p.id) AS playlistCount
+    FROM radio_stations s LEFT JOIN radio_playlist_items p ON p.station_id = s.id AND p.is_active = 1
+    WHERE s.status = 'published' AND s.is_active = 1 GROUP BY s.id ORDER BY s.title`).all<Record<string, unknown>>();
+  return publicJson(request, { items: rows.results }, new Date().toISOString(), 60, cors(env));
+}
+
+async function stationNow(request: Request, env: Env, stationId: string, origin: string) {
+  const station = await env.CATALOG.prepare("SELECT id, title, description, timezone, rotation_anchor_at, content_version, updated_at FROM radio_stations WHERE id = ? AND status = 'published' AND is_active = 1").bind(stationId).first<Record<string, unknown>>();
+  if (!station) return json({ error: "المحطة غير منشورة أو غير متاحة." }, 404, cors(env));
+  const items = await stationItems(env, stationId);
+  if (!items.length) return json({ error: "لا تحتوي المحطة على قائمة تشغيل مرخصة مكتملة." }, 409, cors(env));
+  const totalMs = items.reduce((sum, item) => sum + Number(item.duration_ms), 0);
+  const anchorMs = Date.parse(String(station.rotation_anchor_at));
+  const elapsedMs = Math.max(0, Date.now() - (Number.isFinite(anchorMs) ? anchorMs : Date.now()));
+  let cursor = totalMs ? elapsedMs % totalMs : 0;
+  let index = 0;
+  while (index < items.length - 1 && cursor >= Number(items[index].duration_ms)) { cursor -= Number(items[index].duration_ms); index += 1; }
+  const current = stationAsset(items[index], origin);
+  const next = stationAsset(items[(index + 1) % items.length], origin);
+  const startsAt = new Date(Date.now() - cursor).toISOString();
+  const endsAt = new Date(Date.now() + Number(items[index].duration_ms) - cursor).toISOString();
+  return publicJson(request, { station: { id: station.id, title: station.title, description: station.description, timezone: station.timezone, contentVersion: station.content_version }, now: { asset: current, startOffsetMs: Math.floor(cursor), startsAt, endsAt }, next: { asset: next }, serverTime: now() }, String(station.updated_at), 10, cors(env));
+}
+
+async function createStation(request: Request, env: Env) {
+  const denied = requireAdmin(request, env); if (denied) return denied;
+  const input = await readJson<StationInput>(request);
+  if (!input.id || !input.title) return json({ error: "يلزم معرّف المحطة وعنوانها." }, 422, cors(env));
+  const status = input.status ?? "draft";
+  if (!["draft", "published", "hidden", "archived"].includes(status)) return json({ error: "حالة نشر المحطة غير صالحة." }, 422, cors(env));
+  await env.CATALOG.prepare("INSERT INTO radio_stations (id, title, description, timezone, rotation_anchor_at, status, is_active, content_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?) ON CONFLICT(id) DO UPDATE SET title = excluded.title, description = excluded.description, timezone = excluded.timezone, rotation_anchor_at = excluded.rotation_anchor_at, status = excluded.status, content_version = radio_stations.content_version + 1, updated_at = excluded.updated_at")
+    .bind(sanitizeSegment(input.id), input.title.trim(), input.description?.trim() ?? null, input.timezone?.trim() || "UTC", input.rotationAnchorAt || now(), status, now(), now()).run();
+  return json({ id: sanitizeSegment(input.id), status }, 201, cors(env));
+}
+
+async function addStationItem(request: Request, env: Env, stationId: string) {
+  const denied = requireAdmin(request, env); if (denied) return denied;
+  const input = await readJson<StationItemInput>(request);
+  const asset = await env.CATALOG.prepare(`SELECT a.id FROM media_assets a JOIN media_versions v ON v.id = a.current_version_id JOIN content_sources s ON s.id = a.source_id
+    WHERE a.id = ? AND a.status = 'active' AND a.publication_status = 'published' AND v.state = 'ready' AND a.duration_ms > 0 AND s.streaming_allowed = 1`).bind(input.assetId).first<{ id?: string }>();
+  if (!asset?.id) return json({ error: "الأصل غير صالح للبث الإذاعي؛ يلزم أصل نشط ومدة وحقوق بث صريحة." }, 422, cors(env));
+  const station = await env.CATALOG.prepare("SELECT id FROM radio_stations WHERE id = ?").bind(stationId).first<{ id?: string }>();
+  if (!station?.id) return json({ error: "المحطة غير موجودة." }, 404, cors(env));
+  const itemId = `${sanitizeSegment(stationId)}-${sanitizeSegment(input.assetId)}`;
+  await env.CATALOG.batch([
+    env.CATALOG.prepare("INSERT INTO radio_playlist_items (id, station_id, media_asset_id, sort_order, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(station_id, media_asset_id) DO UPDATE SET sort_order = excluded.sort_order, is_active = excluded.is_active, updated_at = excluded.updated_at").bind(itemId, stationId, input.assetId, input.sortOrder ?? 0, input.isActive === false ? 0 : 1, now(), now()),
+    env.CATALOG.prepare("UPDATE radio_stations SET content_version = content_version + 1, updated_at = ? WHERE id = ?").bind(now(), stationId),
+  ]);
+  return json({ id: itemId, stationId, assetId: input.assetId }, 201, cors(env));
+}
+
+async function updatePublication(request: Request, env: Env, assetId: string) {
+  const denied = requireAdmin(request, env); if (denied) return denied;
+  const input = await readJson<PublicationInput>(request);
+  await env.CATALOG.prepare("UPDATE media_assets SET publication_status = ?, sort_order = COALESCE(?, sort_order), content_version = content_version + 1, updated_at = ? WHERE id = ?").bind(input.publicationStatus, input.sortOrder ?? null, now(), assetId).run();
+  return json({ id: assetId, publicationStatus: input.publicationStatus }, 200, cors(env));
+}
+
+async function upsertReciter(request: Request, env: Env) {
+  const denied = requireAdmin(request, env); if (denied) return denied;
+  const input = await readJson<ReciterInput>(request);
+  if (!input.id || !input.nameAr?.trim()) return json({ error: "يلزم معرّف القارئ واسمه العربي." }, 422, cors(env));
+  const status = input.publicationStatus ?? "draft";
+  await env.CATALOG.prepare("INSERT INTO reciters (id, name_ar, name_en, description, sort_order, publication_status, is_active, source_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'internal', ?, ?) ON CONFLICT(id) DO UPDATE SET name_ar = excluded.name_ar, name_en = excluded.name_en, description = excluded.description, sort_order = excluded.sort_order, publication_status = excluded.publication_status, is_active = excluded.is_active, updated_at = excluded.updated_at")
+    .bind(sanitizeSegment(input.id), input.nameAr.trim(), input.nameEn?.trim() ?? null, input.description?.trim() ?? null, input.sortOrder ?? 0, status, input.isActive === false ? 0 : 1, now(), now()).run();
+  return json({ id: sanitizeSegment(input.id), publicationStatus: status }, 201, cors(env));
+}
+
+function bytesToHex(bytes: ArrayBuffer) { return Array.from(new Uint8Array(bytes)).map((value) => value.toString(16).padStart(2, "0")).join(""); }
+
+async function uploadReciterImage(request: Request, env: Env, reciterId: string) {
+  const denied = requireAdmin(request, env); if (denied) return denied;
+  const contentType = request.headers.get("content-type")?.split(";")[0] ?? "";
+  const extensions: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+  const originalUrl = request.headers.get("x-original-url")?.trim() ?? "";
+  if (!extensions[contentType] || !/^https:\/\//.test(originalUrl)) return json({ error: "تُقبل JPEG أو PNG أو WebP مع رابط مصدر https موثق للصورة." }, 422, cors(env));
+  const reciter = await env.CATALOG.prepare("SELECT id FROM reciters WHERE id = ?").bind(reciterId).first<{ id?: string }>();
+  if (!reciter?.id) return json({ error: "القارئ غير موجود؛ أنشئ بياناته أولًا." }, 404, cors(env));
+  const bytes = await request.arrayBuffer();
+  if (!bytes.byteLength || bytes.byteLength > 5 * 1024 * 1024) return json({ error: "حجم صورة القارئ يجب أن يكون بين 1 بايت و5 MB." }, 422, cors(env));
+  const sha256 = bytesToHex(await crypto.subtle.digest("SHA-256", bytes));
+  const last = await env.CATALOG.prepare("SELECT COALESCE(MAX(version_number), 0) AS version FROM reciter_image_versions WHERE reciter_id = ?").bind(reciterId).first<{ version?: number }>();
+  const version = Number(last?.version ?? 0) + 1;
+  const r2Key = `images/reciters/${sanitizeSegment(reciterId)}/v${version}-${sha256.slice(0, 16)}.${extensions[contentType]}`;
+  await env.MEDIA.put(r2Key, bytes, { httpMetadata: { contentType, cacheControl: "public, max-age=31536000, immutable" }, customMetadata: { reciterId, sha256 } });
+  await env.CATALOG.batch([
+    env.CATALOG.prepare("INSERT INTO reciter_image_versions (id, reciter_id, version_number, r2_key, content_type, bytes, sha256, original_url, attribution_snapshot, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(id(), reciterId, version, r2Key, contentType, bytes.byteLength, sha256, originalUrl, request.headers.get("x-attribution-snapshot")?.trim() ?? null, now()),
+    env.CATALOG.prepare("UPDATE reciters SET image_storage_key = ?, updated_at = ? WHERE id = ?").bind(r2Key, now(), reciterId),
+  ]);
+  return json({ reciterId, version, r2Key, sha256, imageUrl: `/v1/images/reciters/${sanitizeSegment(reciterId)}` }, 201, cors(env));
+}
+
+async function streamReciterImage(request: Request, env: Env, reciterId: string) {
+  const reciter = await env.CATALOG.prepare("SELECT image_storage_key FROM reciters WHERE id = ? AND is_active = 1 AND publication_status = 'published'").bind(reciterId).first<{ image_storage_key?: string | null }>();
+  if (!reciter?.image_storage_key) return json({ error: "لا توجد صورة منشورة لهذا القارئ." }, 404, cors(env));
+  const object = await env.MEDIA.get(reciter.image_storage_key);
+  if (!object) return json({ error: "مرجع صورة القارئ غير موجود." }, 404, cors(env));
+  const headers = new Headers(cors(env)); object.writeHttpMetadata(headers); headers.set("etag", object.httpEtag); headers.set("cache-control", "public, max-age=31536000, immutable");
+  return new Response(request.method === "HEAD" ? null : object.body, { status: 200, headers });
+}
+
+async function contentManifest(request: Request, env: Env) {
+  const counts = await env.CATALOG.prepare(`SELECT
+    (SELECT COUNT(*) FROM reciters WHERE is_active = 1 AND publication_status = 'published') AS reciters,
+    (SELECT COUNT(*) FROM moshafs WHERE is_active = 1 AND publication_status = 'published') AS moshafs,
+    (SELECT COUNT(*) FROM media_assets WHERE status = 'active' AND publication_status = 'published') AS assets,
+    (SELECT COUNT(*) FROM radio_stations WHERE status = 'published' AND is_active = 1) AS stations,
+    (SELECT MAX(updated_at) FROM (SELECT updated_at FROM media_assets UNION ALL SELECT updated_at FROM reciters UNION ALL SELECT updated_at FROM moshafs UNION ALL SELECT updated_at FROM radio_stations UNION ALL SELECT updated_at FROM content_sources)) AS lastModified`).first<Record<string, unknown>>();
+  return publicJson(request, { revision: counts?.lastModified ?? null, counts: { reciters: Number(counts?.reciters ?? 0), moshafs: Number(counts?.moshafs ?? 0), assets: Number(counts?.assets ?? 0), stations: Number(counts?.stations ?? 0) } }, String(counts?.lastModified ?? now()), 30, cors(env));
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url); const path = url.pathname.replace(/\/$/, "") || "/";
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(env) });
     try {
       if (request.method === "GET" && path === "/health") return json({ ok: true, time: now() }, 200, cors(env));
+      if ((request.method === "GET" || request.method === "HEAD") && path === "/v1/content/manifest") return contentManifest(request, env);
       if (request.method === "POST" && path === "/v1/admin/sources") return createSource(request, env);
       if (request.method === "POST" && path === "/v1/admin/assets") return createAsset(request, env);
-      if (request.method === "GET" && path === "/v1/sources") {
+      if (request.method === "POST" && path === "/v1/admin/reciters") return upsertReciter(request, env);
+      const reciterImageUploadMatch = path.match(/^\/v1\/admin\/reciters\/([^/]+)\/image$/);
+      if (request.method === "PUT" && reciterImageUploadMatch) return uploadReciterImage(request, env, reciterImageUploadMatch[1]);
+      if (request.method === "POST" && path === "/v1/admin/radio/stations") return createStation(request, env);
+      const stationItemMatch = path.match(/^\/v1\/admin\/radio\/stations\/([^/]+)\/items$/);
+      if (request.method === "POST" && stationItemMatch) return addStationItem(request, env, stationItemMatch[1]);
+      const publicationMatch = path.match(/^\/v1\/admin\/assets\/([^/]+)\/publication$/);
+      if (request.method === "PATCH" && publicationMatch) return updatePublication(request, env, publicationMatch[1]);
+      if ((request.method === "GET" || request.method === "HEAD") && path === "/v1/sources") {
         const rows = await env.CATALOG.prepare("SELECT id, name, official_url AS officialUrl, terms_url AS termsUrl, license_label AS licenseLabel, rights_status AS rightsStatus, streaming_allowed AS streamingAllowed, download_allowed AS downloadAllowed, r2_redistribution_allowed AS r2RedistributionAllowed, attribution_required AS attributionRequired, attribution_text AS attributionText, reviewed_at AS reviewedAt FROM content_sources WHERE is_active = 1 ORDER BY name").all();
-        return json({ items: rows.results }, 200, cors(env));
+        return publicJson(request, { items: rows.results }, new Date().toISOString(), 300, cors(env));
       }
-      if (request.method === "GET" && path === "/v1/quran/reciters") {
-        const rows = await env.CATALOG.prepare(`SELECT r.id, r.name_ar AS nameAr, r.name_en AS nameEn, COUNT(DISTINCT m.id) AS moshafCount, COUNT(DISTINCT a.id) AS trackCount FROM reciters r JOIN moshafs m ON m.reciter_id = r.id AND m.is_active = 1 JOIN media_assets a ON a.moshaf_id = m.id AND a.kind = 'quran_surah' AND a.status = 'active' JOIN media_versions v ON v.id = a.current_version_id AND v.state = 'ready' GROUP BY r.id ORDER BY r.name_ar`).all();
-        return json({ items: rows.results }, 200, cors(env));
+      if ((request.method === "GET" || request.method === "HEAD") && path === "/v1/radio/stations") return listStations(request, env);
+      const stationNowMatch = path.match(/^\/v1\/radio\/stations\/([^/]+)\/now$/);
+      if ((request.method === "GET" || request.method === "HEAD") && stationNowMatch) return stationNow(request, env, stationNowMatch[1], url.origin);
+      if ((request.method === "GET" || request.method === "HEAD") && path === "/v1/quran/surahs") {
+        const rows = await env.CATALOG.prepare(`SELECT number, name_ar AS name, name_en AS englishName, ayah_count AS numberOfAyahs,
+          CASE revelation_type WHEN 'meccan' THEN 'Meccan' WHEN 'medinan' THEN 'Medinan' ELSE NULL END AS revelationType, updated_at AS updatedAt
+          FROM surahs ORDER BY number`).all<Record<string, unknown>>();
+        return publicJson(request, { items: rows.results }, new Date().toISOString(), 86_400, cors(env));
       }
+      if ((request.method === "GET" || request.method === "HEAD") && path === "/v1/quran/reciters") {
+        const rows = await env.CATALOG.prepare(`SELECT r.id, r.name_ar AS nameAr, r.name_en AS nameEn, r.image_storage_key AS imageStorageKey, r.description, COUNT(DISTINCT m.id) AS moshafCount, COUNT(DISTINCT a.id) AS trackCount FROM reciters r JOIN moshafs m ON m.reciter_id = r.id AND m.is_active = 1 AND m.publication_status = 'published' JOIN media_assets a ON a.moshaf_id = m.id AND a.kind = 'quran_surah' AND a.status = 'active' AND a.publication_status = 'published' JOIN media_versions v ON v.id = a.current_version_id AND v.state = 'ready' WHERE r.is_active = 1 AND r.publication_status = 'published' GROUP BY r.id ORDER BY r.sort_order, r.name_ar`).all<Record<string, unknown>>();
+        const items = rows.results.map((row) => ({ ...row, imageUrl: row.imageStorageKey ? `${url.origin}/v1/images/reciters/${row.id}` : null }));
+        return publicJson(request, { items }, new Date().toISOString(), 120, cors(env));
+      }
+      const reciterImageMatch = path.match(/^\/v1\/images\/reciters\/([^/]+)$/);
+      if ((request.method === "GET" || request.method === "HEAD") && reciterImageMatch) return streamReciterImage(request, env, reciterImageMatch[1]);
       const reciterMoshafsMatch = path.match(/^\/v1\/quran\/reciters\/([^/]+)\/moshafs$/);
-      if (request.method === "GET" && reciterMoshafsMatch) {
-        const rows = await env.CATALOG.prepare(`SELECT m.id, m.slug, m.name, m.rewaya, m.quality_kbps AS qualityKbps, m.source_name AS sourceName, COUNT(a.id) AS surahCount FROM moshafs m JOIN media_assets a ON a.moshaf_id = m.id AND a.kind = 'quran_surah' AND a.status = 'active' JOIN media_versions v ON v.id = a.current_version_id AND v.state = 'ready' WHERE m.reciter_id = ? AND m.is_active = 1 GROUP BY m.id ORDER BY m.name`).bind(reciterMoshafsMatch[1]).all();
+      if ((request.method === "GET" || request.method === "HEAD") && reciterMoshafsMatch) {
+        const rows = await env.CATALOG.prepare(`SELECT m.id, m.slug, m.name, m.rewaya, m.quality_kbps AS qualityKbps, m.source_name AS sourceName, COUNT(a.id) AS surahCount FROM moshafs m JOIN media_assets a ON a.moshaf_id = m.id AND a.kind = 'quran_surah' AND a.status = 'active' AND a.publication_status = 'published' JOIN media_versions v ON v.id = a.current_version_id AND v.state = 'ready' WHERE m.reciter_id = ? AND m.is_active = 1 AND m.publication_status = 'published' GROUP BY m.id ORDER BY m.sort_order, m.name`).bind(reciterMoshafsMatch[1]).all();
         return json({ items: rows.results }, 200, cors(env));
       }
       const moshafSurahsMatch = path.match(/^\/v1\/quran\/moshafs\/([^/]+)\/surahs$/);
-      if (request.method === "GET" && moshafSurahsMatch) {
-        const rows = await env.CATALOG.prepare(`SELECT a.id, a.surah_number AS surahNumber, s.name_ar AS surahName, a.title, a.description, a.duration_ms AS durationMs, a.bitrate_kbps AS bitrateKbps, a.original_url AS originalUrl, a.is_downloadable AS isDownloadable, v.bytes, v.sha256 FROM media_assets a JOIN media_versions v ON v.id = a.current_version_id JOIN surahs s ON s.number = a.surah_number WHERE a.moshaf_id = ? AND a.kind = 'quran_surah' AND a.status = 'active' AND v.state = 'ready' ORDER BY a.surah_number`).bind(moshafSurahsMatch[1]).all();
+      if ((request.method === "GET" || request.method === "HEAD") && moshafSurahsMatch) {
+        const rows = await env.CATALOG.prepare(`SELECT a.id, a.surah_number AS surahNumber, s.name_ar AS surahName, a.title, a.description, a.duration_ms AS durationMs, a.bitrate_kbps AS bitrateKbps, a.original_url AS originalUrl, a.is_downloadable AS isDownloadable, v.bytes, v.sha256 FROM media_assets a JOIN media_versions v ON v.id = a.current_version_id JOIN surahs s ON s.number = a.surah_number WHERE a.moshaf_id = ? AND a.kind = 'quran_surah' AND a.status = 'active' AND a.publication_status = 'published' AND v.state = 'ready' ORDER BY a.sort_order, a.surah_number`).bind(moshafSurahsMatch[1]).all();
         return json({ items: rows.results.map((row: any) => ({ ...row, streamUrl: `${url.origin}/v1/media/${row.id}/stream`, downloadUrl: row.isDownloadable ? `${url.origin}/v1/media/${row.id}/download` : null })) }, 200, cors(env));
       }
       const quranAudioMatch = path.match(/^\/v1\/quran\/audio\/([^/]+)\/(\d{1,3})$/);
       if ((request.method === "GET" || request.method === "HEAD") && quranAudioMatch) {
-        const row = await env.CATALOG.prepare("SELECT id FROM media_assets WHERE moshaf_id = ? AND surah_number = ? AND kind = 'quran_surah' AND status = 'active'").bind(quranAudioMatch[1], Number(quranAudioMatch[2])).first<{ id?: string }>();
+        const row = await env.CATALOG.prepare("SELECT id FROM media_assets WHERE moshaf_id = ? AND surah_number = ? AND kind = 'quran_surah' AND status = 'active' AND publication_status = 'published'").bind(quranAudioMatch[1], Number(quranAudioMatch[2])).first<{ id?: string }>();
         return row?.id ? streamAsset(request, env, row.id, false) : json({ error: "السورة غير متاحة في هذا المصحف." }, 404, cors(env));
       }
       const quranDownloadMatch = path.match(/^\/v1\/quran\/download\/([^/]+)\/(\d{1,3})$/);
       if ((request.method === "GET" || request.method === "HEAD") && quranDownloadMatch) {
-        const row = await env.CATALOG.prepare("SELECT id FROM media_assets WHERE moshaf_id = ? AND surah_number = ? AND kind = 'quran_surah' AND status = 'active'").bind(quranDownloadMatch[1], Number(quranDownloadMatch[2])).first<{ id?: string }>();
+        const row = await env.CATALOG.prepare("SELECT id FROM media_assets WHERE moshaf_id = ? AND surah_number = ? AND kind = 'quran_surah' AND status = 'active' AND publication_status = 'published'").bind(quranDownloadMatch[1], Number(quranDownloadMatch[2])).first<{ id?: string }>();
         return row?.id ? streamAsset(request, env, row.id, true) : json({ error: "السورة غير متاحة في هذا المصحف." }, 404, cors(env));
       }
       const initMatch = path.match(/^\/v1\/admin\/assets\/([^/]+)\/uploads$/);
@@ -286,11 +456,13 @@ export default {
       if ((request.method === "GET" || request.method === "HEAD") && streamMatch) return streamAsset(request, env, streamMatch[1], false);
       const downloadMatch = path.match(/^\/v1\/media\/([^/]+)\/download$/);
       if ((request.method === "GET" || request.method === "HEAD") && downloadMatch) return streamAsset(request, env, downloadMatch[1], true);
-      if (request.method === "GET" && path === "/v1/media") {
+      if ((request.method === "GET" || request.method === "HEAD") && path === "/v1/media") {
         const kind = url.searchParams.get("kind");
         const reciterId = url.searchParams.get("reciterId");
-        const rows = await env.CATALOG.prepare(`SELECT a.id, a.kind, a.title, a.description, a.reciter_id AS reciterId, r.name_ar AS reciterName, a.moshaf_id AS moshafId, m.name AS moshafName, m.rewaya, m.quality_kbps AS qualityKbps, a.surah_number AS surahNumber, a.duration_ms AS durationMs, a.original_url AS originalUrl, a.bitrate_kbps AS bitrateKbps, a.is_downloadable AS isDownloadable, v.bytes, v.sha256 FROM media_assets a JOIN media_versions v ON v.id = a.current_version_id LEFT JOIN reciters r ON r.id = a.reciter_id LEFT JOIN moshafs m ON m.id = a.moshaf_id WHERE a.status = 'active' AND v.state = 'ready' AND (? IS NULL OR a.kind = ?) AND (? IS NULL OR a.reciter_id = ?) ORDER BY a.reciter_id, a.moshaf_id, a.surah_number, a.title`).bind(kind, kind, reciterId, reciterId).all();
-        return json({ items: rows.results.map((row: any) => ({ ...row, streamUrl: `${url.origin}/v1/media/${row.id}/stream`, downloadUrl: row.isDownloadable ? `${url.origin}/v1/media/${row.id}/download` : null })) }, 200, cors(env));
+        const cursor = url.searchParams.get("cursor"); const requestedLimit = Number(url.searchParams.get("limit") ?? 500); const limit = Math.min(Math.max(Number.isFinite(requestedLimit) ? requestedLimit : 500, 1), 500);
+        const rows = await env.CATALOG.prepare(`SELECT a.id, a.kind, a.title, a.description, a.reciter_id AS reciterId, r.name_ar AS reciterName, a.moshaf_id AS moshafId, m.name AS moshafName, m.rewaya, m.quality_kbps AS qualityKbps, a.surah_number AS surahNumber, a.duration_ms AS durationMs, a.original_url AS originalUrl, a.bitrate_kbps AS bitrateKbps, a.is_downloadable AS isDownloadable, a.content_version AS contentVersion, a.updated_at AS updatedAt, v.bytes, v.sha256 FROM media_assets a JOIN media_versions v ON v.id = a.current_version_id LEFT JOIN reciters r ON r.id = a.reciter_id LEFT JOIN moshafs m ON m.id = a.moshaf_id WHERE a.status = 'active' AND a.publication_status = 'published' AND v.state = 'ready' AND (? IS NULL OR a.kind = ?) AND (? IS NULL OR a.reciter_id = ?) AND (? IS NULL OR a.id > ?) ORDER BY a.id LIMIT ?`).bind(kind, kind, reciterId, reciterId, cursor, cursor, limit + 1).all();
+        const result = rows.results as Array<Record<string, unknown>>; const hasMore = result.length > limit; const sourcePage = hasMore ? result.slice(0, limit) : result; const nextCursor = hasMore ? String(sourcePage[sourcePage.length - 1]?.id ?? "") : null; const page = sourcePage.map((row) => ({ ...row, streamUrl: `${url.origin}/v1/media/${row.id}/stream`, downloadUrl: row.isDownloadable ? `${url.origin}/v1/media/${row.id}/download` : null }));
+        return publicJson(request, { items: page, nextCursor, hasMore }, new Date().toISOString(), 120, cors(env));
       }
       return json({ error: "Not found" }, 404, cors(env));
     } catch (error) {

@@ -204,3 +204,45 @@ export async function uploadManagedAsset(assetId: string, bytes: Buffer, content
   }, true);
   return { ...completed, sha256, bytes: bytes.byteLength };
 }
+
+export type ManagedStationInput = {
+  id: string;
+  title: string;
+  description?: string;
+  timezone?: string;
+  rotationAnchorAt?: string;
+  status: "draft" | "published" | "hidden" | "archived";
+};
+
+export async function createManagedStation(input: ManagedStationInput) {
+  return workerJson("/v1/admin/radio/stations", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
+  }, true);
+}
+
+export async function addManagedStationItem(stationId: string, input: { assetId: string; sortOrder?: number; isActive?: boolean }) {
+  return workerJson(`/v1/admin/radio/stations/${encodeURIComponent(stationId)}/items`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
+  }, true);
+}
+
+export async function updateManagedAssetPublication(assetId: string, input: { publicationStatus: "draft" | "published" | "hidden" | "archived"; sortOrder?: number }) {
+  return workerJson(`/v1/admin/assets/${encodeURIComponent(assetId)}/publication`, {
+    method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
+  }, true);
+}
+
+export type ManagedReciterInput = { id: string; nameAr: string; nameEn?: string; description?: string; sortOrder?: number; publicationStatus: "draft" | "published" | "hidden" | "archived"; isActive?: boolean };
+
+export async function upsertManagedReciter(input: ManagedReciterInput) {
+  return workerJson("/v1/admin/reciters", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) }, true);
+}
+
+export async function uploadManagedReciterImage(reciterId: string, bytes: Buffer, contentType: "image/jpeg" | "image/png" | "image/webp", originalUrl: string, attributionSnapshot?: string) {
+  if (!bytes.byteLength || bytes.byteLength > 5 * 1024 * 1024) throw new Error("حجم صورة القارئ يجب أن يكون بين 1 بايت و5 MB.");
+  if (!originalUrl.startsWith("https://")) throw new Error("يلزم رابط HTTPS يثبت مصدر صورة القارئ.");
+  const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  return workerJson(`/v1/admin/reciters/${encodeURIComponent(reciterId)}/image`, {
+    method: "PUT", headers: { "content-type": contentType, "x-original-url": originalUrl, ...(attributionSnapshot ? { "x-attribution-snapshot": attributionSnapshot } : {}) }, body,
+  }, true);
+}

@@ -35,4 +35,46 @@ describe("Cloudflare media Worker public endpoint", () => {
     expect(source?.rightsStatus).toBe("permission_required");
     expect(Boolean(source?.r2RedistributionAllowed)).toBe(false);
   }, 20_000);
+
+  it("serves the D1 surah catalog and the scheduled app radio with conditional caching", async () => {
+    const baseUrl = process.env.EXPO_PUBLIC_MEDIA_API_BASE_URL!.replace(/\/$/, "");
+    const surahsResponse = await fetch(`${baseUrl}/v1/quran/surahs`);
+    expect(surahsResponse.ok).toBe(true);
+    const surahs = await surahsResponse.json() as { items?: Array<{ number?: number; name?: string }> };
+    expect(surahs.items).toHaveLength(114);
+    expect(surahs.items?.[0]?.number).toBe(1);
+
+    const stationsResponse = await fetch(`${baseUrl}/v1/radio/stations`);
+    expect(stationsResponse.ok).toBe(true);
+    const etag = stationsResponse.headers.get("etag");
+    expect(etag).toMatch(/^(W\/)?"quran-yutla-/);
+    const stations = await stationsResponse.json() as { items?: Array<{ id?: string }> };
+    expect(stations.items?.some((station) => station.id === "quran-yutla-radio")).toBe(true);
+
+    const cachedResponse = await fetch(`${baseUrl}/v1/radio/stations`, { headers: { "if-none-match": etag ?? "" } });
+    expect(cachedResponse.status).toBe(304);
+    const manifestResponse = await fetch(`${baseUrl}/v1/content/manifest`);
+    expect(manifestResponse.ok).toBe(true);
+    const manifestEtag = manifestResponse.headers.get("etag");
+    const manifest = await manifestResponse.json() as { counts?: { assets?: number; stations?: number } };
+    expect(manifest.counts?.assets).toBeGreaterThanOrEqual(258);
+    expect(manifest.counts?.stations).toBeGreaterThanOrEqual(1);
+    const manifestCached = await fetch(`${baseUrl}/v1/content/manifest`, { headers: { "if-none-match": manifestEtag ?? "" } });
+    expect(manifestCached.status).toBe(304);
+    const nowResponse = await fetch(`${baseUrl}/v1/radio/stations/quran-yutla-radio/now`);
+    expect(nowResponse.ok).toBe(true);
+    const now = await nowResponse.json() as { now?: { asset?: { id?: string; streamUrl?: string }; startOffsetMs?: number }; next?: { asset?: { id?: string } } };
+    expect(now.now?.asset?.id).toBeTruthy();
+    expect(now.now?.asset?.streamUrl).toContain("/v1/media/");
+    expect(now.now?.startOffsetMs).toBeGreaterThanOrEqual(0);
+    expect(now.next?.asset?.id).toBeTruthy();
+  }, 20_000);
+
+  it("rejects radio administration without the Worker admin token", async () => {
+    const baseUrl = process.env.EXPO_PUBLIC_MEDIA_API_BASE_URL!.replace(/\/$/, "");
+    const response = await fetch(`${baseUrl}/v1/admin/radio/stations`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "unauthorized-test", title: "محطة اختبار" }),
+    });
+    expect(response.status).toBe(401);
+  }, 20_000);
 });

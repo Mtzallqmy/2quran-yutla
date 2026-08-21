@@ -8,7 +8,7 @@ import { registerStorageProxy } from "./storageProxy";
 import { sdk } from "./sdk";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
-import { uploadManagedAsset } from "../media-admin";
+import { uploadManagedAsset, uploadManagedReciterImage } from "../media-admin";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -74,6 +74,20 @@ async function startServer() {
       return res.status(201).json(result);
     } catch (error) {
       return res.status(400).json({ error: error instanceof Error ? error.message : "تعذر رفع الملف الصوتي." });
+    }
+  });
+
+  app.put("/api/admin/reciters/:reciterId/image", express.raw({ type: ["image/jpeg", "image/png", "image/webp"], limit: "5mb" }), async (req, res) => {
+    try {
+      const user = await sdk.authenticateRequest(req).catch(() => null);
+      if (!user || user.role !== "admin") return res.status(403).json({ error: "لا تملك صلاحية إدارة صور القراء." });
+      if (!Buffer.isBuffer(req.body)) return res.status(415).json({ error: "يلزم إرسال صورة خام بصيغة JPEG أو PNG أو WebP." });
+      const contentType = req.headers["content-type"]?.split(";")[0] as "image/jpeg" | "image/png" | "image/webp";
+      if (!["image/jpeg", "image/png", "image/webp"].includes(contentType)) return res.status(415).json({ error: "نوع الصورة غير مدعوم." });
+      const result = await uploadManagedReciterImage(req.params.reciterId, req.body, contentType, String(req.headers["x-original-url"] ?? ""), String(req.headers["x-attribution-snapshot"] ?? "") || undefined);
+      return res.status(201).json(result);
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : "تعذر رفع صورة القارئ." });
     }
   });
 

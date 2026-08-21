@@ -23,6 +23,8 @@ export default function SettingsScreen() {
     { label: "التنزيلات", value: "إدارة التلاوات المحفوظة", icon: "download-outline" as const, action: () => router.push("/downloads" as never) },
     { label: "مصادر المحتوى", value: catalog ? `${catalog.approvedAssetCount} ملف معتمد · ${catalog.reciters.length} قارئ` : "يتم التحقق من الفهرس", icon: "database-outline" as const, action: () => void refresh() },
     { label: "إدارة المكتبة", value: isOwner ? "تدقيق الحقوق ورفع ملفات MP3" : "متاحة للمالك بعد تسجيل الدخول", icon: "shield-crown-outline" as const, action: isOwner ? () => router.push("/admin/media" as never) : undefined },
+    { label: "إدارة الإذاعة", value: isOwner ? "محطات وقوائم بث ونشر المحتوى" : "متاحة للمالك بعد تسجيل الدخول", icon: "radio-tower" as const, action: isOwner ? () => router.push("/admin/radio" as never) : undefined },
+    { label: "إدارة القراء", value: isOwner ? "بيانات وصور وإصدارات موثقة" : "متاحة للمالك بعد تسجيل الدخول", icon: "account-voice" as const, action: isOwner ? () => router.push("/admin/reciters" as never) : undefined },
     { label: "حول التطبيق والحقوق", value: "المطور وفهرس المصادر المسجلة", icon: "information-outline" as const, action: () => router.push("/about" as never) },
   ];
   const ownerAction = async () => {
