@@ -12,6 +12,7 @@ export type AudioItem = {
   downloadUrl?: string | null;
   expectedBytes?: number;
   sha256?: string;
+  streamType?: "file" | "hls";
 };
 
 export const categories = ["الكل", "إذاعات", "تلاوات", "قصص"] as const;

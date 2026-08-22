@@ -52,6 +52,7 @@ type StationInput = { id: string; title: string; description?: string; timezone?
 type StationItemInput = { assetId: string; sortOrder?: number; isActive?: boolean };
 type PublicationInput = { publicationStatus: "draft" | "published" | "hidden" | "archived"; sortOrder?: number };
 type ReciterInput = { id: string; nameAr: string; nameEn?: string; description?: string; sortOrder?: number; publicationStatus?: "draft" | "published" | "hidden" | "archived"; isActive?: boolean };
+type LiveHlsChannelInput = { id: string; title: string; description?: string; sourceId: string; manifestUrl: string; status?: "draft" | "published" | "hidden" | "archived"; sortOrder?: number; isActive?: boolean };
 
 
 const json = (body: unknown, status = 200, headers: HeadersInit = {}) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", ...headers } });
@@ -329,6 +330,52 @@ async function addStationItem(request: Request, env: Env, stationId: string) {
   return json({ id: itemId, stationId, assetId: input.assetId }, 201, cors(env));
 }
 
+function validatedHlsManifestUrl(value: string) {
+  let parsed: URL;
+  try { parsed = new URL(value); } catch { throw new Error("رابط قائمة HLS غير صالح."); }
+  if (parsed.protocol !== "https:" || !parsed.pathname.toLowerCase().endsWith(".m3u8")) throw new Error("يلزم رابط HTTPS لقائمة HLS ينتهي بـ .m3u8.");
+  if (["localhost", "127.0.0.1", "0.0.0.0", "::1"].includes(parsed.hostname)) throw new Error("رابط قائمة HLS غير مسموح.");
+  return parsed.toString();
+}
+
+async function listLiveHlsChannels(request: Request, env: Env) {
+  const rows = await env.CATALOG.prepare(`SELECT c.id, c.title, c.description, c.hls_manifest_url AS manifestUrl, c.sort_order AS sortOrder, c.last_probe_status AS lastProbeStatus, c.last_checked_at AS lastCheckedAt, c.updated_at AS updatedAt, s.id AS sourceId, s.name AS sourceName, s.license_label AS licenseLabel, s.attribution_required AS attributionRequired, s.attribution_text AS attributionText
+    FROM live_hls_channels c JOIN content_sources s ON s.id = c.source_id
+    WHERE c.status = 'published' AND c.is_active = 1 AND s.is_active = 1 AND s.streaming_allowed = 1 AND s.rights_status IN ('r2_redistribution_allowed', 'stream_link_only', 'attribution_required')
+    ORDER BY c.sort_order, c.title`).all<Record<string, unknown>>();
+  const revision = (rows.results as Record<string, unknown>[]).reduce((latest, row) => String(row.updatedAt ?? "") > latest ? String(row.updatedAt) : latest, "no-live-hls");
+  return publicJson(request, { items: rows.results }, revision, 15, cors(env));
+}
+
+async function upsertLiveHlsChannel(request: Request, env: Env) {
+  const denied = requireAdmin(request, env); if (denied) return denied;
+  const input = await readJson<LiveHlsChannelInput>(request);
+  if (!input.id || !input.title || !input.sourceId || !input.manifestUrl) return json({ error: "يلزم معرّف القناة وعنوانها ومصدر الحقوق ورابط HLS." }, 422, cors(env));
+  let manifestUrl: string;
+  try { manifestUrl = validatedHlsManifestUrl(input.manifestUrl); } catch (error) { return json({ error: error instanceof Error ? error.message : "رابط HLS غير صالح." }, 422, cors(env)); }
+  const source = await env.CATALOG.prepare("SELECT id FROM content_sources WHERE id = ? AND is_active = 1 AND streaming_allowed = 1 AND rights_status IN ('r2_redistribution_allowed', 'stream_link_only', 'attribution_required')").bind(input.sourceId).first<{ id?: string }>();
+  if (!source?.id) return json({ error: "مصدر الحقوق غير مؤهل للبث المباشر؛ يلزم بث مسموح وترخيص واضح." }, 422, cors(env));
+  const status = input.status ?? "draft";
+  await env.CATALOG.prepare("INSERT INTO live_hls_channels (id, title, description, source_id, hls_manifest_url, status, is_active, sort_order, content_version, last_probe_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'unverified', ?, ?) ON CONFLICT(id) DO UPDATE SET title = excluded.title, description = excluded.description, source_id = excluded.source_id, hls_manifest_url = excluded.hls_manifest_url, status = excluded.status, is_active = excluded.is_active, sort_order = excluded.sort_order, content_version = live_hls_channels.content_version + 1, last_probe_status = 'unverified', updated_at = excluded.updated_at")
+    .bind(sanitizeSegment(input.id), input.title.trim(), input.description?.trim() ?? null, input.sourceId, manifestUrl, status, input.isActive === false ? 0 : 1, input.sortOrder ?? 0, now(), now()).run();
+  return json({ id: sanitizeSegment(input.id), status, manifestUrl }, 201, cors(env));
+}
+
+async function probeLiveHlsChannel(request: Request, env: Env, channelId: string) {
+  const denied = requireAdmin(request, env); if (denied) return denied;
+  const channel = await env.CATALOG.prepare("SELECT id, hls_manifest_url FROM live_hls_channels WHERE id = ?").bind(channelId).first<{ id?: string; hls_manifest_url?: string }>();
+  if (!channel?.id || !channel.hls_manifest_url) return json({ error: "قناة HLS غير موجودة." }, 404, cors(env));
+  let probeStatus: "online" | "offline" | "invalid" = "offline"; let httpStatus: number | null = null;
+  try {
+    const response = await fetch(channel.hls_manifest_url, { headers: { accept: "application/vnd.apple.mpegurl,application/x-mpegURL,text/plain" } });
+    httpStatus = response.status;
+    const body = await response.text();
+    probeStatus = response.ok && body.slice(0, 512).includes("#EXTM3U") ? "online" : "invalid";
+  } catch { probeStatus = "offline"; }
+  await env.CATALOG.prepare("UPDATE live_hls_channels SET last_probe_status = ?, last_checked_at = ?, updated_at = ? WHERE id = ?").bind(probeStatus, now(), now(), channelId).run();
+  return json({ id: channelId, probeStatus, httpStatus, checkedAt: now() }, 200, cors(env));
+}
+
 async function updatePublication(request: Request, env: Env, assetId: string) {
   const denied = requireAdmin(request, env); if (denied) return denied;
   const input = await readJson<PublicationInput>(request);
@@ -385,8 +432,9 @@ async function contentManifest(request: Request, env: Env) {
     (SELECT COUNT(*) FROM moshafs WHERE is_active = 1 AND publication_status = 'published') AS moshafs,
     (SELECT COUNT(*) FROM media_assets WHERE status = 'active' AND publication_status = 'published') AS assets,
     (SELECT COUNT(*) FROM radio_stations WHERE status = 'published' AND is_active = 1) AS stations,
-    (SELECT MAX(updated_at) FROM (SELECT updated_at FROM media_assets UNION ALL SELECT updated_at FROM reciters UNION ALL SELECT updated_at FROM moshafs UNION ALL SELECT updated_at FROM radio_stations UNION ALL SELECT updated_at FROM content_sources)) AS lastModified`).first<Record<string, unknown>>();
-  return publicJson(request, { revision: counts?.lastModified ?? null, counts: { reciters: Number(counts?.reciters ?? 0), moshafs: Number(counts?.moshafs ?? 0), assets: Number(counts?.assets ?? 0), stations: Number(counts?.stations ?? 0) } }, String(counts?.lastModified ?? now()), 30, cors(env));
+    (SELECT COUNT(*) FROM live_hls_channels WHERE status = 'published' AND is_active = 1) AS liveHlsChannels,
+    MAX(COALESCE((SELECT MAX(updated_at) FROM media_assets), ''), COALESCE((SELECT MAX(updated_at) FROM reciters), ''), COALESCE((SELECT MAX(updated_at) FROM moshafs), ''), COALESCE((SELECT MAX(updated_at) FROM radio_stations), ''), COALESCE((SELECT MAX(updated_at) FROM live_hls_channels), ''), COALESCE((SELECT MAX(updated_at) FROM content_sources), '')) AS lastModified`).first<Record<string, unknown>>();
+  return publicJson(request, { revision: counts?.lastModified ?? null, counts: { reciters: Number(counts?.reciters ?? 0), moshafs: Number(counts?.moshafs ?? 0), assets: Number(counts?.assets ?? 0), stations: Number(counts?.stations ?? 0), liveHlsChannels: Number(counts?.liveHlsChannels ?? 0) } }, String(counts?.lastModified ?? now()), 30, cors(env));
 }
 
 export default {
@@ -398,6 +446,9 @@ export default {
       if ((request.method === "GET" || request.method === "HEAD") && path === "/v1/content/manifest") return contentManifest(request, env);
       if (request.method === "POST" && path === "/v1/admin/sources") return createSource(request, env);
       if (request.method === "POST" && path === "/v1/admin/assets") return createAsset(request, env);
+      if (request.method === "POST" && path === "/v1/admin/live/hls-channels") return upsertLiveHlsChannel(request, env);
+      const liveHlsProbeMatch = path.match(/^\/v1\/admin\/live\/hls-channels\/([^/]+)\/probe$/);
+      if (request.method === "POST" && liveHlsProbeMatch) return probeLiveHlsChannel(request, env, liveHlsProbeMatch[1]);
       if (request.method === "POST" && path === "/v1/admin/reciters") return upsertReciter(request, env);
       const reciterImageUploadMatch = path.match(/^\/v1\/admin\/reciters\/([^/]+)\/image$/);
       if (request.method === "PUT" && reciterImageUploadMatch) return uploadReciterImage(request, env, reciterImageUploadMatch[1]);
@@ -411,6 +462,7 @@ export default {
         return publicJson(request, { items: rows.results }, new Date().toISOString(), 300, cors(env));
       }
       if ((request.method === "GET" || request.method === "HEAD") && path === "/v1/radio/stations") return listStations(request, env);
+      if ((request.method === "GET" || request.method === "HEAD") && path === "/v1/live/hls-channels") return listLiveHlsChannels(request, env);
       const stationNowMatch = path.match(/^\/v1\/radio\/stations\/([^/]+)\/now$/);
       if ((request.method === "GET" || request.method === "HEAD") && stationNowMatch) return stationNow(request, env, stationNowMatch[1], url.origin);
       if ((request.method === "GET" || request.method === "HEAD") && path === "/v1/quran/surahs") {

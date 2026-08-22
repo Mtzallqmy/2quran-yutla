@@ -31,7 +31,8 @@ export type RadioStationNow = {
   next: { asset: R2MediaAsset };
   serverTime: string;
 };
-export type ContentManifest = { revision: string | null; counts: { reciters: number; moshafs: number; assets: number; stations: number } };
+export type LiveHlsChannel = { id: string; title: string; description?: string | null; manifestUrl: string; sortOrder: number; lastProbeStatus: "unverified" | "online" | "offline" | "invalid"; lastCheckedAt?: string | null; updatedAt: string; sourceId: string; sourceName: string; licenseLabel: string; attributionRequired: number | boolean; attributionText?: string | null };
+export type ContentManifest = { revision: string | null; counts: { reciters: number; moshafs: number; assets: number; stations: number; liveHlsChannels?: number } };
 
 export type R2ContentSource = {
   id: string;
@@ -78,6 +79,13 @@ export async function fetchRadioStations() {
   const response = await fetch(`${mediaApiBaseUrl()}/v1/radio/stations`);
   if (!response.ok) throw new Error("تعذر تحميل محطات إذاعة التطبيق.");
   const body = await response.json() as { items?: RadioStation[] };
+  return body.items ?? [];
+}
+
+export async function fetchLiveHlsChannels() {
+  const response = await fetch(`${mediaApiBaseUrl()}/v1/live/hls-channels`, { cache: "no-store" });
+  if (!response.ok) throw new Error("تعذر تحميل قنوات البث الحي HLS.");
+  const body = await response.json() as { items?: LiveHlsChannel[] };
   return body.items ?? [];
 }
 

@@ -226,6 +226,16 @@ export async function addManagedStationItem(stationId: string, input: { assetId:
   }, true);
 }
 
+export type ManagedLiveHlsChannelInput = { id: string; title: string; description?: string; sourceId: string; manifestUrl: string; status: "draft" | "published" | "hidden" | "archived"; sortOrder?: number; isActive?: boolean };
+
+export async function upsertManagedLiveHlsChannel(input: ManagedLiveHlsChannelInput) {
+  return workerJson("/v1/admin/live/hls-channels", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) }, true);
+}
+
+export async function probeManagedLiveHlsChannel(channelId: string) {
+  return workerJson(`/v1/admin/live/hls-channels/${encodeURIComponent(channelId)}/probe`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }, true);
+}
+
 export async function updateManagedAssetPublication(assetId: string, input: { publicationStatus: "draft" | "published" | "hidden" | "archived"; sortOrder?: number }) {
   return workerJson(`/v1/admin/assets/${encodeURIComponent(assetId)}/publication`, {
     method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(input),

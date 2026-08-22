@@ -2,7 +2,7 @@ import { COOKIE_NAME } from "../shared/const.js";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { adminProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { addManagedStationItem, auditAaqibCommons, createManagedAsset, createManagedSource, createManagedStation, importCommonsCandidate, updateManagedAssetPublication, upsertManagedReciter } from "./media-admin";
+import { addManagedStationItem, auditAaqibCommons, createManagedAsset, createManagedSource, createManagedStation, importCommonsCandidate, probeManagedLiveHlsChannel, updateManagedAssetPublication, upsertManagedLiveHlsChannel, upsertManagedReciter } from "./media-admin";
 import { claimFirstOwner, getOwnerBootstrapState } from "./db";
 import { z } from "zod";
 
@@ -52,6 +52,9 @@ export const appRouter = router({
     })).mutation(({ input }) => createManagedStation(input)),
     addStationItem: adminProcedure.input(z.object({ stationId: z.string().min(3), assetId: z.string().min(3), sortOrder: z.number().int().min(0).max(1_000_000).optional(), isActive: z.boolean().optional() }))
       .mutation(({ input }) => addManagedStationItem(input.stationId, { assetId: input.assetId, sortOrder: input.sortOrder, isActive: input.isActive })),
+    upsertLiveHlsChannel: adminProcedure.input(z.object({ id: z.string().min(3).max(80), title: z.string().min(3).max(120), description: z.string().max(500).optional(), sourceId: z.string().min(3).max(120), manifestUrl: z.string().url().refine((value) => /^https:\/\/.+\.m3u8(?:\?.*)?$/i.test(value), "يلزم رابط HTTPS لقائمة HLS ينتهي بـ .m3u8"), status: z.enum(["draft", "published", "hidden", "archived"]), sortOrder: z.number().int().min(0).max(1_000_000).optional(), isActive: z.boolean().optional() }))
+      .mutation(({ input }) => upsertManagedLiveHlsChannel(input)),
+    probeLiveHlsChannel: adminProcedure.input(z.object({ id: z.string().min(3).max(80) })).mutation(({ input }) => probeManagedLiveHlsChannel(input.id)),
     updatePublication: adminProcedure.input(z.object({ assetId: z.string().min(3), publicationStatus: z.enum(["draft", "published", "hidden", "archived"]), sortOrder: z.number().int().min(0).max(1_000_000).optional() }))
       .mutation(({ input }) => updateManagedAssetPublication(input.assetId, { publicationStatus: input.publicationStatus, sortOrder: input.sortOrder })),
     upsertReciter: adminProcedure.input(z.object({ id: z.string().min(3).max(80), nameAr: z.string().min(2).max(160), nameEn: z.string().max(160).optional(), description: z.string().max(1000).optional(), sortOrder: z.number().int().min(0).max(1_000_000).optional(), publicationStatus: z.enum(["draft", "published", "hidden", "archived"]), isActive: z.boolean().optional() }))

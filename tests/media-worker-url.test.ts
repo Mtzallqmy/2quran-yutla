@@ -77,4 +77,19 @@ describe("Cloudflare media Worker public endpoint", () => {
     });
     expect(response.status).toBe(401);
   }, 20_000);
+
+  it("exposes a cacheable HLS channel index and rejects unauthenticated HLS changes", async () => {
+    const baseUrl = process.env.EXPO_PUBLIC_MEDIA_API_BASE_URL!.replace(/\/$/, "");
+    const indexResponse = await fetch(`${baseUrl}/v1/live/hls-channels`);
+    expect(indexResponse.ok).toBe(true);
+    const etag = indexResponse.headers.get("etag");
+    const index = await indexResponse.json() as { items?: unknown[] };
+    expect(Array.isArray(index.items)).toBe(true);
+    const cachedIndex = await fetch(`${baseUrl}/v1/live/hls-channels`, { headers: { "if-none-match": etag ?? "" } });
+    expect(cachedIndex.status).toBe(304);
+    const unauthorized = await fetch(`${baseUrl}/v1/admin/live/hls-channels`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "unauthorized-hls", title: "قناة اختبار", sourceId: "none", manifestUrl: "https://example.org/live.m3u8", status: "draft" }),
+    });
+    expect(unauthorized.status).toBe(401);
+  }, 20_000);
 });
