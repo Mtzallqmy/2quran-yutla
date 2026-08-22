@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { appOwnerClaims, InsertUser, users } from "../drizzle/schema";
 import { ENV } from "./_core/env";
+import { localOwnerOpenId, normalizeOwnerEmail } from "./owner-email-auth";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -115,4 +116,19 @@ export async function claimFirstOwner(userId: number) {
   });
 }
 
-// TODO: add feature queries here as your schema grows.
+export async function ensureEmailOwnerAccount(email: string) {
+  const db = await getDb();
+  if (!db) throw new Error("قاعدة بيانات التطبيق غير متاحة لتسجيل دخول المالك.");
+  const normalizedEmail = normalizeOwnerEmail(email);
+  const openId = localOwnerOpenId(normalizedEmail);
+  return db.transaction(async (tx) => {
+    await tx.insert(users).values({ openId, name: "مالك قرآن يتلى", email: normalizedEmail, loginMethod: "email_password", role: "admin", lastSignedIn: new Date() }).onDuplicateKeyUpdate({ set: { name: "مالك قرآن يتلى", email: normalizedEmail, loginMethod: "email_password", role: "admin", lastSignedIn: new Date() } });
+    const owner = await tx.select().from(users).where(eq(users.openId, openId)).limit(1);
+    const ownerUser = owner[0];
+    if (!ownerUser) throw new Error("تعذر تهيئة حساب المالك.");
+    await tx.insert(appOwnerClaims).values({ singletonId: 1, userId: ownerUser.id }).onDuplicateKeyUpdate({ set: { userId: ownerUser.id } });
+    return ownerUser;
+  });
+}
+
+// TODO: add feature queries here as your project grows.

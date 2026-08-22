@@ -1,9 +1,12 @@
 import { COOKIE_NAME } from "../shared/const.js";
 import { getSessionCookieOptions } from "./_core/cookies";
+import { sdk } from "./_core/sdk";
 import { systemRouter } from "./_core/systemRouter";
 import { adminProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { addManagedStationItem, auditAaqibCommons, createManagedAsset, createManagedSource, createManagedStation, importCommonsCandidate, probeManagedLiveHlsChannel, updateManagedAssetPublication, upsertManagedLiveHlsChannel, upsertManagedReciter } from "./media-admin";
-import { claimFirstOwner, getOwnerBootstrapState } from "./db";
+import { claimFirstOwner, ensureEmailOwnerAccount, getOwnerBootstrapState } from "./db";
+import { clearOwnerLoginFailures, isOwnerLoginBlocked, localOwnerOpenId, normalizeOwnerEmail, recordOwnerLoginFailure, verifyConfiguredOwnerLogin } from "./owner-email-auth";
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
 export const appRouter = router({
@@ -17,6 +20,26 @@ export const appRouter = router({
       return {
         success: true,
       } as const;
+    }),
+  }),
+  ownerEmail: router({
+    status: publicProcedure.query(({ ctx }) => {
+      const configuredEmail = normalizeOwnerEmail(process.env.OWNER_LOGIN_EMAIL ?? "");
+      return { authenticated: Boolean(configuredEmail && ctx.user?.openId === localOwnerOpenId(configuredEmail)) };
+    }),
+    login: publicProcedure.input(z.object({ email: z.string().trim().email().max(320), password: z.string().min(8).max(512) })).mutation(async ({ ctx, input }) => {
+      const email = normalizeOwnerEmail(input.email);
+      if (isOwnerLoginBlocked(email)) throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "تم إيقاف المحاولة مؤقتًا. أعد المحاولة لاحقًا." });
+      if (!(await verifyConfiguredOwnerLogin(email, input.password))) {
+        recordOwnerLoginFailure(email);
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "بيانات الدخول غير صحيحة." });
+      }
+      clearOwnerLoginFailures(email);
+      const owner = await ensureEmailOwnerAccount(email);
+      const expiresInMs = 12 * 60 * 60 * 1000;
+      const token = await sdk.createSessionToken(owner.openId, { expiresInMs, name: "مالك قرآن يتلى" });
+      ctx.res.cookie(COOKIE_NAME, token, { ...getSessionCookieOptions(ctx.req), maxAge: expiresInMs });
+      return { token, user: { id: owner.id, openId: owner.openId, name: owner.name, email: owner.email, loginMethod: owner.loginMethod, lastSignedIn: owner.lastSignedIn } };
     }),
   }),
   owner: router({
