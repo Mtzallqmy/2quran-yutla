@@ -17,7 +17,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const { colors } = useQuranTheme();
   const { catalog, loading } = useQuranContent();
-  const { current, isPlaying, recentIds, playItem, togglePlayback } = usePlayer();
+  const { current, isPlaying, recentIds, resumePositions, playItem, togglePlayback } = usePlayer();
   const approvedItems = useMemo<AudioItem[]>(() => {
     if (!catalog) return [];
     const recitationItems = catalog.reciters.flatMap((reciter) => {
@@ -27,9 +27,10 @@ export default function HomeScreen() {
     });
     return [...recitationItems, ...catalog.radios.map(getRadioAudioItem)];
   }, [catalog]);
-  const currentIsApproved = Boolean(current && approvedItems.some((item) => item.id === current.id));
-  const resume = currentIsApproved ? current : approvedItems[0];
   const recent = useMemo(() => recentIds.map((id) => approvedItems.find((item) => item.id === id)).filter((item): item is AudioItem => Boolean(item)), [approvedItems, recentIds]);
+  const currentIsApproved = Boolean(current && approvedItems.some((item) => item.id === current.id));
+  const resumedItem = recent.find((item) => (resumePositions[item.id]?.positionSeconds ?? 0) > 3);
+  const resume = currentIsApproved ? current : resumedItem ?? recent[0] ?? approvedItems[0];
   const displayed = recent.length ? recent : approvedItems.slice(0, 2);
   const startPlayback = () => {
     if (currentIsApproved && current) return void togglePlayback();
@@ -37,11 +38,11 @@ export default function HomeScreen() {
   };
 
   return <ScreenContainer style={{ backgroundColor: colors.background }}><FlatList data={displayed} keyExtractor={(item) => item.id} renderItem={({ item }) => <AudioCard item={item} compact />} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}
-    ListEmptyComponent={loading ? <View style={styles.loading}><ActivityIndicator color={colors.emerald} /></View> : <View style={[styles.empty, { backgroundColor: colors.surfaceMuted }]}><MaterialCommunityIcons name="shield-check-outline" size={28} color={colors.gold} /><Text style={[styles.emptyText, { color: colors.textMuted }]}>لا توجد تلاوات معتمدة في المكتبة المركزية بعد. لن يظهر التطبيق روابط من مصادر خارجية غير موثقة.</Text></View>}
+    ListEmptyComponent={loading ? <View style={styles.loading}><ActivityIndicator color={colors.emerald} /></View> : <View style={[styles.empty, { backgroundColor: colors.surfaceMuted }]}><MaterialCommunityIcons name="shield-check-outline" size={28} color={colors.gold} /><Text style={[styles.emptyText, { color: colors.textMuted }]}>لا توجد تلاوات متاحة الآن. لن يُعرض إلا المحتوى الذي تم التحقق من مصدره.</Text></View>}
     ListHeaderComponent={<View>
       <View style={styles.topline}><View style={[styles.mark, { backgroundColor: colors.goldSoft }]}><MaterialCommunityIcons name="book-open-page-variant" size={20} color={colors.gold} /></View><View style={styles.titleBlock}><Text style={[styles.brand, { color: colors.text }]}>قرآن يتلى</Text><Text style={[styles.by, { color: colors.textMuted }]}>من تطوير معتز العلقمي</Text></View></View>
       <View style={[styles.hero, { backgroundColor: colors.emerald }]}><Text style={styles.heroGlyph}>۞</Text><Text style={styles.eyebrow}>رفيقك اليومي للاستماع</Text><Text style={styles.heroTitle}>افتح قلبك{`\n`}لتلاوة تلامس الروح</Text><Pressable disabled={!resume} onPress={startPlayback} style={({ pressed }) => [styles.heroAction, !resume && styles.disabled, pressed && resume && styles.pressed]}><MaterialCommunityIcons name={currentIsApproved && isPlaying ? "pause" : "play"} size={21} color={colors.emerald} /><Text style={[styles.heroActionText, { color: colors.emerald }]}>{currentIsApproved && isPlaying ? "إيقاف مؤقت" : resume ? "ابدأ الاستماع" : "بانتظار مصدر معتمد"}</Text></Pressable></View>
-      {resume ? <Pressable onPress={startPlayback} style={({ pressed }) => [styles.resume, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && styles.pressed]}><View style={[styles.resumePlay, { backgroundColor: colors.emerald }]}><MaterialCommunityIcons name={currentIsApproved && isPlaying ? "pause" : "play"} size={22} color="#FFF" /></View><View style={styles.resumeCopy}><Text style={[styles.resumeLabel, { color: colors.gold }]}>أكمل استماعك</Text><Text numberOfLines={1} style={[styles.resumeTitle, { color: colors.text }]}>{resume.title}</Text><Text numberOfLines={1} style={[styles.resumeSub, { color: colors.textMuted }]}>{resume.subtitle}</Text></View><ArtworkOrb color={resume.color} kind={resume.kind} size={48} /></Pressable> : null}
+      {resume ? <Pressable onPress={startPlayback} style={({ pressed }) => [styles.resume, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && styles.pressed]}><View style={[styles.resumePlay, { backgroundColor: colors.emerald }]}><MaterialCommunityIcons name={currentIsApproved && isPlaying ? "pause" : "play"} size={22} color="#FFF" /></View><View style={styles.resumeCopy}><Text style={[styles.resumeLabel, { color: colors.gold }]}>{(resumePositions[resume.id]?.positionSeconds ?? 0) > 3 ? "أكمل من آخر موضع" : "استمع الآن"}</Text><Text numberOfLines={1} style={[styles.resumeTitle, { color: colors.text }]}>{resume.title}</Text><Text numberOfLines={1} style={[styles.resumeSub, { color: colors.textMuted }]}>{resume.subtitle}</Text></View><ArtworkOrb color={resume.color} kind={resume.kind} size={48} /></Pressable> : null}
       <View style={styles.shortcuts}>{[["المكتبة الإذاعية", "radio", "/(tabs)/listen"], ["القراء", "account-voice", "/(tabs)/reciters"], ["مكتبتي", "heart-outline", "/(tabs)/library"]].map(([label, icon, path]) => <Pressable key={label} onPress={() => router.push(path as never)} style={({ pressed }) => [styles.shortcut, { backgroundColor: colors.surfaceMuted }, pressed && styles.pressed]}><MaterialCommunityIcons name={icon as never} size={22} color={colors.emerald} /><Text style={[styles.shortcutText, { color: colors.text }]}>{label}</Text></Pressable>)}</View>
       <View style={styles.section}><SectionHeading eyebrow="استمرارك" title={recent.length ? "استمعت إليها مؤخرًا" : "محتوى معتمد"} /></View>
     </View>}

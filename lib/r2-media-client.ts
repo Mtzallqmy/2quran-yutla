@@ -54,7 +54,7 @@ const colorFor = (value: string) => palette[Array.from(value).reduce((total, cha
 
 export function mediaApiBaseUrl() {
   const base = process.env.EXPO_PUBLIC_MEDIA_API_BASE_URL?.replace(/\/$/, "");
-  if (!base) throw new Error("لم تُضبط خدمة مكتبة R2 بعد. أضف EXPO_PUBLIC_MEDIA_API_BASE_URL بعد نشر Worker.");
+  if (!base) throw new Error("خدمة المحتوى غير متاحة حاليًا. حاول مرة أخرى لاحقًا.");
   return base;
 }
 
@@ -63,7 +63,7 @@ export async function fetchR2Media(kind?: R2MediaAsset["kind"], reciterId?: stri
   if (kind) url.searchParams.set("kind", kind);
   if (reciterId) url.searchParams.set("reciterId", reciterId);
   const response = await fetch(url.toString());
-  if (!response.ok) throw new Error("تعذر تحميل فهرس المكتبة الصوتية المعتمدة من R2.");
+  if (!response.ok) throw new Error("تعذر تحميل المحتوى الصوتي الآن.");
   const body = await response.json() as { items?: R2MediaAsset[] };
   return body.items ?? [];
 }
@@ -108,7 +108,7 @@ export function toAudioItem(asset: R2MediaAsset): AudioItem {
   return {
     id: asset.id,
     title: asset.title,
-    subtitle: asset.description || (reciter ? `${reciter}${asset.moshafName ? ` · ${asset.moshafName}` : ""} · السورة ${asset.surahNumber}` : "ملف مفهرس من المكتبة المركزية"),
+    subtitle: asset.description || (reciter ? `${reciter}${asset.moshafName ? ` · ${asset.moshafName}` : ""} · السورة ${asset.surahNumber}` : "محتوى صوتي موثق"),
     category: kind === "reciter" ? "تلاوات" : kind === "station" ? "إذاعات" : "محتوى صوتي",
     streamUrl: asset.streamUrl,
     kind,
@@ -122,7 +122,7 @@ export function toAudioItem(asset: R2MediaAsset): AudioItem {
 
 export async function verifyRemoteMedia(item: AudioItem) {
   const response = await fetch(item.streamUrl, { method: "HEAD" });
-  if (!response.ok) throw new Error("الملف المفهرس غير متاح الآن.");
+  if (!response.ok) throw new Error("الصوت غير متاح الآن.");
   const bytes = Number(response.headers.get("content-length") ?? 0);
   const sha256 = response.headers.get("x-content-sha256") ?? "";
   if (item.expectedBytes && bytes && bytes !== item.expectedBytes) throw new Error("حجم الملف لا يطابق الفهرس المعتمد.");

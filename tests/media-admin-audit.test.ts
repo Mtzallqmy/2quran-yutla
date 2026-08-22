@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { auditAaqibCommons } from "../server/media-admin";
+import { auditAaqibCommons, updateManagedAssetPublication } from "../server/media-admin";
 
 describe("Wikimedia Commons media audit", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -18,4 +18,12 @@ describe("Wikimedia Commons media audit", () => {
       expect(item.bytes).toBeGreaterThan(0);
     }
   }, 30_000);
+
+  it("ينفذ اعتماد النشر كخطوة مستقلة بعد الرفع", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "approved-audio", publicationStatus: "published" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await updateManagedAssetPublication("approved-audio", { publicationStatus: "published" });
+    expect(result).toMatchObject({ id: "approved-audio", publicationStatus: "published" });
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/v1\/admin\/assets\/approved-audio\/publication$/), expect.objectContaining({ method: "PATCH" }));
+  });
 });
