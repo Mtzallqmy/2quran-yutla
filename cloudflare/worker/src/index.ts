@@ -133,7 +133,8 @@ async function streamAsset(request: Request, env: Env, assetId: string, download
   const media = await activeMedia(env, assetId);
   if (!media) return json({ error: "الملف غير متاح أو لم يُتحقق منه بعد." }, 404, cors(env));
   if (download && asNumber(media.is_downloadable) !== 1) return json({ error: "هذا الملف غير متاح للتنزيل." }, 403, cors(env));
-  const object = await env.MEDIA.get(String(media.r2_key), { range: request.headers });
+  const requestedRange = request.headers.get("range");
+  const object = requestedRange ? await env.MEDIA.get(String(media.r2_key), { range: request.headers }) : await env.MEDIA.get(String(media.r2_key));
   if (!object) return json({ error: "مرجع التخزين غير موجود." }, 404, cors(env));
   const headers = new Headers(cors(env));
   object.writeHttpMetadata(headers);
@@ -142,7 +143,7 @@ async function streamAsset(request: Request, env: Env, assetId: string, download
   headers.set("cache-control", `public, max-age=${Number(env.PUBLIC_CACHE_SECONDS ?? 86400)}, immutable`);
   headers.set("x-content-sha256", String(media.sha256));
   if (download) headers.set("content-disposition", `attachment; filename="${sanitizeSegment(String(media.id))}.mp3"`);
-  if (object.range) {
+  if (requestedRange && object.range) {
     const range = object.range;
     const start = "suffix" in range ? object.size - range.suffix : range.offset ?? 0;
     const length = "suffix" in range ? range.suffix : range.length ?? (object.size - start);
@@ -150,6 +151,7 @@ async function streamAsset(request: Request, env: Env, assetId: string, download
     headers.set("content-range", `bytes ${start}-${end}/${object.size}`);
     return new Response(request.method === "HEAD" ? null : object.body, { status: 206, headers });
   }
+  headers.set("content-length", String(object.size));
   return new Response(request.method === "HEAD" ? null : object.body, { status: 200, headers });
 }
 

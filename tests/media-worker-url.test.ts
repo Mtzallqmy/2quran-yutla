@@ -22,8 +22,13 @@ describe("Cloudflare media Worker public endpoint", () => {
 
     const streamResponse = await fetch(asset!.streamUrl!, { method: "HEAD" });
     expect(streamResponse.ok).toBe(true);
+    expect(streamResponse.status).toBe(200);
     expect(streamResponse.headers.get("accept-ranges")).toBe("bytes");
     expect(streamResponse.headers.get("x-content-sha256")).toBe(asset?.sha256);
+    expect(Number(streamResponse.headers.get("content-length"))).toBeGreaterThan(0);
+    const rangeResponse = await fetch(asset!.streamUrl!, { headers: { range: "bytes=0-1023" } });
+    expect(rangeResponse.status).toBe(206);
+    expect(rangeResponse.headers.get("content-range")).toMatch(/^bytes 0-1023\//);
   }, 20_000);
 
   it("records the Shuraim publisher as permission-required rather than an approved R2 source", async () => {
